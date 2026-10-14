@@ -1,32 +1,7 @@
-import sys
+from dyndnsarr_agent.cli import cli, serve
 
-import uvicorn
-from pydantic import ValidationError
-
-from dyndnsarr_agent.config import Settings
-from dyndnsarr_agent.ddns.config import ConfigError
-from dyndnsarr_agent.logging_setup import setup_logging
-from dyndnsarr_agent.main import create_app
-
-
-def main() -> None:
-    try:
-        settings = Settings()
-    except ValidationError as exc:
-        # Sin el valor recibido: a futuro la configuración puede incluir secretos.
-        prefix = Settings.model_config["env_prefix"]
-        problems = "\n".join(
-            f"  {prefix}{'_'.join(map(str, e['loc'])).upper()}: {e['msg']}"
-            for e in exc.errors(include_input=False)
-        )
-        sys.exit(f"Configuración inválida:\n{problems}")
-    setup_logging(settings.log_level)
-    try:
-        app = create_app(settings)
-    except ConfigError as exc:
-        sys.exit(str(exc))
-    uvicorn.run(app, host=settings.host, port=settings.port, log_config=None)
-
+# `main()` sirve el Agent; `python -m dyndnsarr_agent <comando>` admite además los subcomandos.
+main = serve
 
 if __name__ == "__main__":
-    main()
+    cli()

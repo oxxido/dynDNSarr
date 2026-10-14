@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-dyndnsarr-agent = "dyndnsarr_agent.__main__:main"
+dyndnsarr-agent = "dyndnsarr_agent.cli:cli"
 
 [build-system]
 requires = ["setuptools>=68"]
