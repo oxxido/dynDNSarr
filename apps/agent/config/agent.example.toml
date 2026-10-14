@@ -1,0 +1,22 @@
+# Configuración del motor DDNS del Agent (sin secretos).
+# Se activa con DYNDNSARR_AGENT_CONFIG_FILE=/etc/dyndnsarr/agent.toml
+
+# Segundos entre comprobaciones (mínimo 60).
+check_interval_seconds = 300
+
+[ip_sources]
+# Mínimo 2 fuentes HTTPS independientes que devuelvan la IPv4 pública como texto.
+urls = ["https://api.ipify.org", "https://ipv4.icanhazip.com"]
+
+[dns]
+# Resolvers externos a los que se pregunta: "ip" o "ip:puerto".
+resolvers = ["1.1.1.1", "8.8.8.8"]
+
+[retention]
+samples_days = 30     # muestras de IP y comprobaciones DNS
+events_days = 365
+
+[[records]]
+name = "home.example.com"
+mode = "monitored"    # solo se observa; "managed" llega en el slice 2b
+enabled = true

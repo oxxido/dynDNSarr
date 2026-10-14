@@ -8,6 +8,8 @@ dependencies = [
     "fastapi>=0.115,<1",
     "uvicorn>=0.30,<1",
     "pydantic-settings>=2.3,<3",
+    "httpx>=0.27,<1",
+    "dnspython>=2.6,<3",
 ]
 
 [project.scripts]
@@ -22,6 +24,8 @@ packages = [
     "dyndnsarr_agent",
     "dyndnsarr_agent.api",
     "dyndnsarr_agent.db",
+    "dyndnsarr_agent.ddns",
+    "dyndnsarr_agent.dns",
 ]
 
 [tool.setuptools.package-data]
