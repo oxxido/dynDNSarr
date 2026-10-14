@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     port: int = Field(8001, ge=1, le=65535)
     data_dir: Path = Path("/var/lib/dyndnsarr")
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    # TOML del motor DDNS (sin secretos). Sin él, el motor queda desactivado.
+    config_file: Path | None = None
 
     @property
     def db_path(self) -> Path:

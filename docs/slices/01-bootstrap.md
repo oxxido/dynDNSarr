@@ -1,9 +1,9 @@
 # Slice 1 — Monorepo y entorno
 
-- **Estado:** en implementación
+- **Estado:** fusionado (PR #1, merge `c355252` en `main`)
 - **Fase (arquitectura):** 0 ([architecture.md](../architecture.md) §12)
 - **Rama:** `slice/01-bootstrap`
-- **PR:** pendiente de abrir (contra `main`): `gh` sin sesión válida (ver Evidencia)
+- **PR:** #1 (fusionado)
 
 ## Objetivo
 
