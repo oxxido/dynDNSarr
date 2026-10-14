@@ -79,4 +79,7 @@ def test_startup_log_describes_the_instance_without_secrets(component, tmp_path,
     assert record.host == settings.host
     assert record.port == settings.port
     assert record.data_dir == str(settings.data_dir)
-    assert record.schema_version == 1
+    migrations = component.module("db").MIGRATIONS
+    assert record.schema_version == len(
+        [f for f in migrations.iterdir() if f.name.endswith(".sql")]
+    )

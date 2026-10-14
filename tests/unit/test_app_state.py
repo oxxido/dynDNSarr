@@ -30,4 +30,6 @@ def test_migration_0001_creates_app_state_table(component, tmp_path):
     conn = open_db(component, tmp_path)
     columns = [r[1] for r in conn.execute("PRAGMA table_info(app_state)")]
     assert columns == ["key", "value", "updated_at"]
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    migrations = component.module("db").MIGRATIONS
+    expected = len([f for f in migrations.iterdir() if f.name.endswith(".sql")])
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == expected
