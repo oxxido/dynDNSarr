@@ -1,0 +1,28 @@
+[Unit]
+Description=DynDNSarr Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dyndnsarr
+Group=dyndnsarr
+EnvironmentFile=/etc/dyndnsarr/agent.env
+ExecStart=/opt/dyndnsarr/venv/bin/dyndnsarr-agent
+Restart=always
+RestartSec=5
+
+# Datos en /var/lib/dyndnsarr, creado por systemd con dueño dyndnsarr.
+StateDirectory=dyndnsarr
+StateDirectoryMode=0700
+
+# Endurecimiento básico y límites de recursos
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
