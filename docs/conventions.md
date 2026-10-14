@@ -46,3 +46,16 @@ Detalle y alternativas descartadas: [slices/01-bootstrap.md](slices/01-bootstrap
 - Logging: `logging` estándar con salida JSON y redacción de claves sensibles (`password`, `token`, `secret`, `key`, `authorization`). Los valores sensibles deben pasar como `extra=`: un secreto dentro del texto del mensaje no se redacta.
 - Idioma: identificadores y nombres de evento de log en inglés; comentarios, docstrings, mensajes de error y documentación en español.
 - Config, lifespan y `/healthz` se escriben por separado en cada app; solo se comparte lo que ya comparten por necesidad (SQLite, logging, contrato de salud).
+
+## Fijado en slice2a
+
+Detalle: [slices/02a-observacion-ip-dns.md](slices/02a-observacion-ip-dns.md) (D1–D7) y [ADR-0003](decisions/0003-motor-ddns-observacion.md).
+
+- Config del motor DDNS: TOML sin secretos (`DYNDNSARR_AGENT_CONFIG_FILE`); las variables de entorno siguen siendo la config del proceso. Los secretos, cuando existan (2b), van por variables de entorno, nunca en el TOML.
+- Capas del Agent: `ddns/` (reglas y orquestación: `config`, `ip_sources`, `cycle`), `dns/` (cliente DNS tras el `Protocol` `DnsObserver`), `db/ddns_repo.py` (SQLite) y `scheduler.py`; la red se observa primero y el ciclo escribe todo en una sola transacción.
+- IP pública: «confirmada» solo con ≥2 fuentes que coinciden y IPv4 global; en otro caso `uncertain` (nunca se concluye por mayoría ni con una fuente).
+- Eventos solo en cambios de estado; `sequence` es `AUTOINCREMENT` (no se reutiliza tras purgar). Instantes en UTC `YYYY-MM-DDTHH:MM:SSZ`.
+- Errores de red/DNS se guardan y registran como códigos seguros (`timeout`, `nxdomain`, `connect_error`…), nunca con el texto de la excepción ni la URL. `httpx`/`httpcore` en `WARNING`.
+- TLS siempre verificado; `http://` solo a `localhost`/`127.0.0.1` y solo en la configuración de fuentes (para pruebas).
+- CLI: `dyndnsarr-agent` sin argumentos sirve; `status` solo lee, `check-*` guardan muestras sin tocar estado ni eventos.
+- Pruebas: servidores falsos en loopback (`FakeDns`, `FakeIpSource` en `tests/conftest.py`); nada de servicios reales.

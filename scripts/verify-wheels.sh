@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Construye los wheels, los instala en un venv limpio y arranca Agent y Hub instalados para
-# comprobar /healthz. Detecta, p. ej., migraciones .sql que no viajan dentro del paquete.
+# Construye los wheels, los instala en un venv limpio, arranca Agent y Hub instalados para
+# comprobar /healthz y ejecuta `dyndnsarr-agent status` sobre la BD del Agent. Detecta, p. ej.,
+# migraciones .sql que no viajan dentro del paquete.
 # Uso: scripts/verify-wheels.sh   (PYTHON=python3.11 para elegir intérprete)
 set -euo pipefail
 
@@ -50,3 +51,7 @@ PY
 
 check agent DYNDNSARR_AGENT
 check hub DYNDNSARR_HUB
+
+# `status` falla si la migración 0002 (tablas del motor DDNS) no viajó dentro del wheel.
+DYNDNSARR_AGENT_DATA_DIR="$work/data-agent" "$work/venv/bin/dyndnsarr-agent" status >/dev/null
+echo "OK: agent instalado desde wheel ejecuta 'dyndnsarr-agent status'"
