@@ -6,7 +6,7 @@ Un slice es la unidad de trabajo: una rama y un PR. El orden y el alcance genera
 
 - Solo se detalla el siguiente slice. El roadmap no es un slice listo.
 - Archivo: `docs/slices/NN-nombre.md` (p. ej. `01-bootstrap.md`), creado desde [_template.md](_template.md) en la rama del slice.
-- Rama desde `master` actualizado: `slice/NN-nombre`.
+- Rama desde `main` actualizado: `slice/NN-nombre`.
 - Planificar un slice no implica implementarlo; la ejecución se encarga por separado.
 - Estados: `pendiente`, `planificado`, `en implementación`, `en revisión`, `fusionado`. Se marca `fusionado` solo tras verificarlo.
 - Al cambiar de estado, actualizar el índice y registrar rama, PR y evidencia en el archivo del slice.

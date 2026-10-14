@@ -36,4 +36,3 @@ Pendientes que **no** figuran en A1–A7 y afectan al slice1 (resolver al planif
 
 - Versión de Python disponible en la Raspberry destino (la arquitectura pide 3.12+; verificar).
 - Herramienta de migraciones, linter/formatter y proveedor de CI.
-- Remoto Git: aún no existe (ver AGENTS.md, punto 5 de "Trabajo por slices y Git").

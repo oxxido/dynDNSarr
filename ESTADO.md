@@ -5,7 +5,7 @@
 ## Proyecto
 
 - Solo documentación. No hay código, entorno Python ni CI todavía.
-- Git inicializado localmente en `master`. No hay remoto configurado.
+- Rama base: `main`. Remoto `origin`: git@github.com:oxxido/dynDNSarr.git.
 - Slice activo: ninguno. Siguiente: **slice1** (Fase 0, monorepo y entorno), sin planificar. Ver [docs/slices/README.md](docs/slices/README.md).
 
 ## Comandos
