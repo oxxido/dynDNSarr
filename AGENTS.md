@@ -82,15 +82,15 @@ ESTADO.md
 ## Trabajo por slices y Git
 
 1. Planificar solo el siguiente slice con detalle en `docs/slices/NN-nombre.md`. Usar la plantilla y actualizar el índice. El roadmap no constituye un slice listo.
-2. Una rama y un PR por slice por defecto. Crear la rama desde `master` actualizado; el plan detallado y la implementación pertenecen a esa rama y PR.
+2. Una rama y un PR por slice por defecto. Crear la rama desde `main` actualizado; el plan detallado y la implementación pertenecen a esa rama y PR.
 3. No implementar un slice cuando el encargo se limite a planificarlo. Al recibir el encargo de ejecución, completar alcance, pruebas y documentación del slice.
 4. Hacer commits pequeños y coherentes, revisar el diff y los archivos incluidos. No incluir secretos, documentos reales ni cambios ajenos. No reescribir historial remoto ni descartar trabajo del usuario.
 5. El flujo de entrega acordado para ejecutar un slice incluye commits, push de su rama y apertura de PR. Si falta remoto o acceso, dejar trabajo local verificable y comunicar el requisito faltante. No inventar un destino ni crear un repositorio remoto por suposición.
-6. PR contra `master`: problema, comportamiento resultante, alcance, validación real y migraciones/riesgos relevantes. Atender revisión y CI. No confundir push o PR abierto con merge.
-7. Fusionar cuando se haya autorizado el merge y se cumplan los controles del repositorio. No inferir autorización para fusionar del permiso para abrir el PR. Tras el merge, partir de `master` actualizado para la siguiente ronda.
+6. PR contra `main`: problema, comportamiento resultante, alcance, validación real y migraciones/riesgos relevantes. Atender revisión y CI. No confundir push o PR abierto con merge.
+7. Fusionar cuando se haya autorizado el merge y se cumplan los controles del repositorio. No inferir autorización para fusionar del permiso para abrir el PR. Tras el merge, partir de `main` actualizado para la siguiente ronda.
 8. Registrar rama, PR, estado y evidencia en el slice. Estados: pendiente, planificado, en implementación, en revisión, fusionado. Marcar fusionado solo tras verificarlo.
 
-Excepción de arranque: la base documental se commitea directamente en `master` (creada al inicializar Git). A partir de slice1 se trabaja por ramas y PR. No simular pushes o PR mientras no exista remoto.
+Excepción de arranque: la base documental se commitea directamente en `main` (creada al inicializar Git). A partir de slice1 se trabaja por ramas y PR. No simular pushes o PR mientras no exista remoto.
 
 ## REGLAS
 - NUNCA modificar AGENTS.md. De ser necesario, pedir permiso al usuario y mostrar que y como se va a modificar.
