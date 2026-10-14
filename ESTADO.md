@@ -6,7 +6,7 @@
 
 - Agent y Hub mínimos: arrancan, exponen `/healthz`, persisten en su SQLite (migraciones, WAL) y escriben logs JSON sin secretos. No hay lógica DDNS ni de producto todavía.
 - Rama base: `main`. Remoto `origin`: git@github.com:oxxido/dynDNSarr.git.
-- Slice activo: **slice1** (Fase 0, monorepo y entorno), en la rama `slice/01-bootstrap`. Ver [docs/slices/01-bootstrap.md](docs/slices/01-bootstrap.md) (estado y evidencia).
+- Slice1 (Fase 0) fusionado en `main` (PR #1). Slice activo: **slice2a** (Fase 1, observación de IP y DNS), planificado en la rama `slice/02a-observacion-ip-dns`. Ver [docs/slices/02a-observacion-ip-dns.md](docs/slices/02a-observacion-ip-dns.md).
 
 ## Comandos
 
