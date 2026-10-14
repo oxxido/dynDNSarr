@@ -6,8 +6,9 @@ from typing import Any
 
 REDACTED = "[REDACTED]"
 _SENSITIVE_PARTS = ("password", "token", "secret", "key", "authorization")
-# Atributos que `logging` pone en todo LogRecord; el resto vienen de `extra=`.
-_RECORD_ATTRS = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
+# Atributos que `logging` pone en todo LogRecord (más `color_message`, el duplicado con ANSI de
+# uvicorn); el resto vienen de `extra=`.
+_RECORD_ATTRS = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime", "color_message"}
 
 
 def _is_sensitive(key: str) -> bool:
