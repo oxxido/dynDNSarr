@@ -6,7 +6,7 @@
 
 - Solo documentación. No hay código, entorno Python ni CI todavía.
 - Rama base: `main`. Remoto `origin`: git@github.com:oxxido/dynDNSarr.git.
-- Slice activo: ninguno. Siguiente: **slice1** (Fase 0, monorepo y entorno), sin planificar. Ver [docs/slices/README.md](docs/slices/README.md).
+- Slice activo: **slice1** (Fase 0, monorepo y entorno), planificado en la rama `slice/01-bootstrap`; sin implementar. Ver [docs/slices/01-bootstrap.md](docs/slices/01-bootstrap.md).
 
 ## Comandos
 
