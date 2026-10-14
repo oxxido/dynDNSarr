@@ -36,7 +36,7 @@ Propuestas para aprobar junto con este plan; las duraderas pasan a ADR si cambia
 
 | # | Decisión | Propuesta | Alternativa descartada |
 |---|---|---|---|
-| D1 | Python mínimo | `>=3.12`. Local y CI usan 3.12. **La Raspberry no está verificada** (ver Riesgos) | Bajar a 3.11 o instalar 3.12 en la Pi: solo si la comprobación falla, vía ADR |
+| D1 | Python mínimo | `>=3.11` ([ADR-0002](../decisions/0002-python-3-11.md)): la Raspberry trae 3.11.2. Desarrollo local en 3.12; la CI prueba 3.11 y 3.12. El Hub en Docker usa `python:3.12-slim` | Instalar 3.12 en la Pi (`uv`/`pyenv`) o ejecutar el Agent en Docker: más piezas o cambia la arquitectura |
 | D2 | Empaquetado y entorno | `venv` + `pip`; tres `pyproject.toml` (setuptools) instalados en editable; el `pyproject.toml` raíz solo contiene configuración de ruff/pytest y el extra `dev` | `uv` workspace: no está instalado y no aporta lo suficiente aquí |
 | D3 | Migraciones | Archivos `NNNN_nombre.sql` dentro de cada app (`db/migrations/`), aplicados en orden y en transacción por un runner pequeño en `shared`; versión en `PRAGMA user_version`. Se rechaza arrancar si la BD tiene una versión mayor que la conocida | Alembic/ORM: excesivo (conventions: `sqlite3` + migraciones explícitas) |
 | D4 | Config | `pydantic-settings`, solo variables de entorno, prefijos `DYNDNSARR_AGENT_` y `DYNDNSARR_HUB_`. Defaults seguros: escucha en `127.0.0.1` | Archivos TOML/YAML: no hacen falta aún |
@@ -68,19 +68,19 @@ Commits pequeños, tests antes del código en cada paso. Cada paso termina con `
 4. **Hub.** Igual que el paso 3.
 5. **E2E de arranque.** Tests que lanzan cada componente como proceso real en un puerto libre, consultan `/healthz`, lo paran con SIGTERM y lo relanzan comprobando persistencia.
 6. **Despliegue.** Unidad systemd, `Dockerfile`, `compose.yaml`, `.env.example`. *Verifica:* `systemd-analyze verify` sobre la unidad; build y arranque del Hub en Docker (requiere autorización, ver Riesgos).
-7. **CI y wheels.** Workflow de GitHub Actions (ruff, pytest, build de wheels, build de la imagen del Hub) y `scripts/verify-wheels.sh`: construye los wheels, los instala en un venv limpio y arranca el Agent para comprobar `/healthz` (detecta migraciones `.sql` que no viajan en el paquete).
+7. **CI y wheels.** Workflow de GitHub Actions con matriz Python 3.11/3.12 (ruff, pytest, build de wheels) y build de la imagen del Hub y `scripts/verify-wheels.sh`: construye los wheels, los instala en un venv limpio y arranca el Agent para comprobar `/healthz` (detecta migraciones `.sql` que no viajan en el paquete).
 8. **Documentación.** `README.md`, `docs/operations.md` (arranque local, instalación en Raspberry con systemd, despliegue en Dockge, backup/restore de `/data`), actualizar `ESTADO.md` con los comandos reales, `docs/conventions.md` (quitar "Pendiente de fijar") y el índice de slices.
 
 ## Criterios de aceptación
 
 Arquitectura §12 Fase 0: *ambos arrancan y vuelven a arrancar con datos persistidos; sin secretos en logs.* Concretado:
 
-1. En un venv limpio, `pip install -e` de los tres paquetes, `ruff check`, `ruff format --check` y `pytest` terminan con éxito.
+1. En un venv limpio, `pip install -e` de los tres paquetes, `ruff check`, `ruff format --check` y `pytest` terminan con éxito, con Python 3.11 y 3.12 (la matriz de CI cubre 3.11).
 2. Agent y Hub arrancan, `GET /healthz` → 200 con el contrato esperado; tras parar y relanzar, `instance_id` es el mismo y `boot_count` aumenta en 1.
 3. Con la BD inaccesible, `/healthz` → 503. Con una BD de versión posterior, el componente no arranca.
 4. Una migración que falla no deja cambios ni cambia `user_version`.
 5. Los logs de arranque de ambos componentes son JSON, y un test demuestra que un valor bajo una clave sensible se redacta.
-6. Los wheels de agent, hub y shared se instalan en un venv limpio y el Agent instalado arranca (migraciones incluidas).
+6. Los wheels de agent, hub y shared se instalan en un venv limpio (3.11 y 3.12) y el Agent instalado arranca (migraciones incluidas).
 7. `systemd-analyze verify` no reporta errores en la unidad del Agent.
 8. `docker compose up` levanta el Hub, el healthcheck pasa, y los datos sobreviven a `docker compose restart`.
 9. La CI de GitHub pasa en el PR.
@@ -100,7 +100,7 @@ Arquitectura §12 Fase 0: *ambos arrancan y vuelven a arrancar con datos persist
 
 ## Riesgos y migraciones
 
-- **Python en la Raspberry sin verificar.** Si la Pi no ofrece 3.12, la guía systemd no es ejecutable tal cual. Antes de cerrar el paso 8, el usuario ejecuta `python3 --version` en la Pi y comparte la versión y la de Raspberry Pi OS. Si es menor que 3.12, se detiene el trabajo y se decide por ADR. El código y la CI no dependen de esto.
+- **Divergencia local/Pi.** Local tiene 3.12 y la Pi 3.11.2. Se mitiga con la matriz 3.11 en CI y con la regla de no usar funciones exclusivas de 3.12. El criterio 10 sigue siendo la comprobación real en la Pi.
 - **Comandos con efecto global.** Docker (build/run) y cualquier uso de `systemctl` usan el daemon del sistema y requieren autorización explícita del usuario en el momento de ejecutarlos. La unidad systemd solo se redacta y valida; no se instala en el equipo de desarrollo.
 - **Migraciones `.sql` fuera del wheel.** Error clásico de empaquetado; lo cubre el criterio 6.
 - **GitHub Actions no verificable en local.** La evidencia del criterio 9 llega con la primera ejecución del PR.

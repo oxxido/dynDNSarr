@@ -32,7 +32,7 @@ Construir DynDNSarr: un administrador DDNS para homelabs con **Agent autónomo e
 
 | Área | Tecnología |
 | :---- | :---- |
-| Lenguaje | Python 3.12+ (verificar disponibilidad en Raspberry destino) |
+| Lenguaje | Python 3.11+ (la Raspberry destino trae 3.11.2; ver ADR-0002) |
 | Agent | Servicio Python nativo `systemd` \+ servidor HTTP ligero FastAPI/Uvicorn |
 | Hub | FastAPI \+ Uvicorn en **un contenedor** Docker Compose/Dockge |
 | Plantillas | Jinja2 server-rendered, HTMX solo donde aporte valor; CSS/JS simple |

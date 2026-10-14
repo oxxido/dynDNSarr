@@ -4,7 +4,7 @@ Derivadas de [architecture.md](architecture.md) §0, §2 y §4. Si algo no está
 
 ## Stack
 
-- Python 3.12+ (verificar en la Raspberry destino). FastAPI/Uvicorn, Jinja2, HTMX solo donde aporte, SQLite por componente.
+- Python 3.11+ (la Raspberry trae 3.11.2, ADR-0002); no usar sintaxis ni librería estándar exclusivas de 3.12. FastAPI/Uvicorn, Jinja2, HTMX solo donde aporte, SQLite por componente.
 - No añadir Redis, PostgreSQL, MQTT, Celery, React, Node.js ni microservicios sin una necesidad real documentada.
 - Evitar ORM pesado: `sqlite3` con repositorios y migraciones explícitas, si basta.
 - Un solo worker por proceso (evita schedulers duplicados).
