@@ -25,6 +25,7 @@ class Component:
 
 COMPONENTS = [
     Component("agent", "DYNDNSARR_AGENT_", 8001, "/var/lib/dyndnsarr", "agent.db"),
+    Component("hub", "DYNDNSARR_HUB_", 8000, "/data", "hub.db"),
 ]
 
 
