@@ -4,8 +4,9 @@ import uvicorn
 from pydantic import ValidationError
 
 from dyndnsarr_agent.config import Settings
+from dyndnsarr_agent.ddns.config import ConfigError
+from dyndnsarr_agent.logging_setup import setup_logging
 from dyndnsarr_agent.main import create_app
-from dyndnsarr_shared.logging import configure_logging
 
 
 def main() -> None:
@@ -19,8 +20,12 @@ def main() -> None:
             for e in exc.errors(include_input=False)
         )
         sys.exit(f"Configuración inválida:\n{problems}")
-    configure_logging(settings.log_level)
-    uvicorn.run(create_app(settings), host=settings.host, port=settings.port, log_config=None)
+    setup_logging(settings.log_level)
+    try:
+        app = create_app(settings)
+    except ConfigError as exc:
+        sys.exit(str(exc))
+    uvicorn.run(app, host=settings.host, port=settings.port, log_config=None)
 
 
 if __name__ == "__main__":
