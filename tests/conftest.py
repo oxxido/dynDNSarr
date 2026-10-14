@@ -1,3 +1,4 @@
+import http.server
 import importlib
 import socketserver
 import threading
@@ -107,3 +108,53 @@ def make_fake_dns():
 @pytest.fixture
 def fake_dns(make_fake_dns) -> FakeDns:
     return make_fake_dns()
+
+
+class FakeIpSource:
+    """Servidor HTTP en loopback que devuelve `ip` como texto (o 503 si `ip` es None)."""
+
+    def __init__(self, ip: str | None) -> None:
+        self.ip = ip
+        fake = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                if fake.ip is None:
+                    self.send_response(503)
+                    self.end_headers()
+                    return
+                body = f"{fake.ip}\n".encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args) -> None:
+                pass
+
+        self._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._thread = threading.Thread(
+            target=self._server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True
+        )
+        self._thread.start()
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self._server.server_address[1]}/"
+
+    def close(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+
+
+@pytest.fixture
+def make_fake_ip_source():
+    sources = []
+
+    def make(ip: str | None) -> FakeIpSource:
+        sources.append(FakeIpSource(ip))
+        return sources[-1]
+
+    yield make
+    for source in sources:
+        source.close()
