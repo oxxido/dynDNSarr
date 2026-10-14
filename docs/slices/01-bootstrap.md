@@ -3,7 +3,7 @@
 - **Estado:** en implementación
 - **Fase (arquitectura):** 0 ([architecture.md](../architecture.md) §12)
 - **Rama:** `slice/01-bootstrap`
-- **PR:** — (contra `main`)
+- **PR:** pendiente de abrir (contra `main`): `gh` sin sesión válida (ver Evidencia)
 
 ## Objetivo
 
@@ -109,4 +109,23 @@ Arquitectura §12 Fase 0: *ambos arrancan y vuelven a arrancar con datos persist
 
 ## Evidencia
 
-Se rellena al implementar.
+Rama `slice/01-bootstrap` publicada en `origin`. Verificado el 2026-10-14 con Python 3.12.3:
+
+| Criterio | Resultado |
+|---|---|
+| 1. venv limpio, `pip install -e`, `ruff check`, `ruff format --check`, `pytest` | Verificado con 3.12 (66 tests, 0 fallos). **3.11 no verificado**: no hay 3.11 en el equipo; lo cubre la matriz de CI. |
+| 2. `/healthz` 200; `instance_id` igual y `boot_count` +1 tras relanzar | Verificado: `tests/e2e/test_process_startup.py` (procesos reales, SIGTERM y relanzamiento) y `tests/integration/test_app.py` |
+| 3. BD inaccesible → 503; BD de versión posterior → no arranca | Verificado en `tests/integration/test_app.py` |
+| 4. Migración fallida no deja cambios ni cambia `user_version` | Verificado en `tests/unit/test_shared_db.py` |
+| 5. Logs de arranque JSON y redacción de claves sensibles | Verificado en `tests/unit/test_shared_logging.py` y en el e2e (un valor canario bajo `SOME_API_TOKEN` no aparece en los logs) |
+| 6. Wheels instalan en venv limpio y arrancan Agent y Hub | Verificado con 3.12 (`scripts/verify-wheels.sh`). Comprobado también que el script falla si el wheel omite las migraciones. 3.11 pendiente de CI. |
+| 7. `systemd-analyze verify` sin errores | Verificado sobre una copia con `ExecStart` apuntando al venv local. Sobre el archivo real solo avisa de que `/opt/dyndnsarr/venv/bin/dyndnsarr-agent` no existe (existirá en la Raspberry). |
+| 8. `docker compose up`, healthcheck y datos tras `restart` | Verificado con `scripts/verify-compose.sh` (autorizado por el usuario): healthy y `boot_count` 1 → 2 |
+| 9. CI de GitHub en el PR | **Pendiente.** El workflow solo se dispara en PR o push a `main`; el PR no se pudo abrir (token de `gh` inválido: `gh auth login -h github.com`). |
+| 10. Instalación manual en la Raspberry | **Pendiente (verificación del usuario)** con [docs/operations.md](../operations.md) §2 |
+
+Notas para la revisión:
+
+- `uvicorn` termina con la señal recibida tras un cierre ordenado (código -15 con SIGTERM); el e2e lo acepta y exige el log `Finished server process`.
+- La redacción de logs actúa sobre las claves de `extra=`, no sobre el texto del mensaje.
+- Procedimientos de backup/restore de Docker y despliegue en Dockge documentados pero no automatizados ni probados.
