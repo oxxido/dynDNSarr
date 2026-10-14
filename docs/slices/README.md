@@ -15,7 +15,7 @@ Un slice es la unidad de trabajo: una rama y un PR. El orden y el alcance genera
 
 | Slice | Fase | Nombre | Estado | Rama | PR |
 |---|---|---|---|---|---|
-| 1 | 0 | Monorepo y entorno | pendiente | — | — |
+| 1 | 0 | Monorepo y entorno ([plan](01-bootstrap.md)) | en implementación | `slice/01-bootstrap` | — |
 | 2 | 1 | Motor DDNS standalone | pendiente | — | — |
 | 3 | 2 | Enlace seguro Hub–Agent | pendiente | — | — |
 | 4 | 3 | Landing pública real | pendiente | — | — |

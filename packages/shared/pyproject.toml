@@ -1,0 +1,16 @@
+[project]
+name = "dyndnsarr-shared"
+dynamic = ["version"]
+description = "Contratos y utilidades compartidas de DynDNSarr (sin secretos)"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.7,<3"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["dyndnsarr_shared"]
+
+[tool.setuptools.dynamic]
+version = { attr = "dyndnsarr_shared.__version__" }

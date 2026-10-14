@@ -5,3 +5,4 @@ Una decisión que debe sobrevivir a un slice se registra aquí: `NNNN-titulo-cor
 | ADR | Decisión |
 |---|---|
 | [0001](0001-arquitectura-prevalece-sobre-prd.md) | La arquitectura prevalece sobre el PRD |
+| [0002](0002-python-3-11.md) | Python 3.11 como versión mínima |

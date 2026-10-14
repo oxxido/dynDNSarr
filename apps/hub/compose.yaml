@@ -1,0 +1,18 @@
+services:
+  hub:
+    build:
+      context: ../..
+      dockerfile: apps/hub/Dockerfile
+    image: dyndnsarr-hub:local
+    restart: unless-stopped
+    # Por defecto solo escucha en el propio servidor. Para la LAN, fija
+    # DYNDNSARR_HUB_BIND a la IP LAN del servidor (ver docs/operations.md).
+    ports:
+      - "${DYNDNSARR_HUB_BIND:-127.0.0.1}:${DYNDNSARR_HUB_PORT:-8000}:8000"
+    environment:
+      DYNDNSARR_HUB_LOG_LEVEL: ${DYNDNSARR_HUB_LOG_LEVEL:-INFO}
+    volumes:
+      - hub-data:/data
+
+volumes:
+  hub-data:

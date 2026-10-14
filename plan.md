@@ -34,5 +34,4 @@ Estado de cada slice: [docs/slices/README.md](docs/slices/README.md).
 
 Pendientes que **no** figuran en A1–A7 y afectan al slice1 (resolver al planificarlo):
 
-- Versión de Python disponible en la Raspberry destino (la arquitectura pide 3.12+; verificar).
 - Herramienta de migraciones, linter/formatter y proveedor de CI.

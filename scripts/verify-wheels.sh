@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Construye los wheels, los instala en un venv limpio y arranca Agent y Hub instalados para
+# comprobar /healthz. Detecta, p. ej., migraciones .sql que no viajan dentro del paquete.
+# Uso: scripts/verify-wheels.sh   (PYTHON=python3.11 para elegir intérprete)
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+python="${PYTHON:-python3}"
+work="$(mktemp -d)"
+pid=""
+cleanup() {
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+    rm -rf "$work"
+}
+trap cleanup EXIT
+cd "$work"
+
+# Se construye desde una copia limpia: un build/ viejo en el árbol fuente podría ocultar archivos
+# que el wheel no incluye.
+mkdir "$work/src"
+tar -C "$root" --exclude=build --exclude='*.egg-info' --exclude=__pycache__ -cf - packages apps |
+    tar -C "$work/src" -xf -
+"$python" -m pip wheel --quiet --no-deps -w "$work/wheels" \
+    "$work/src/packages/shared" "$work/src/apps/agent" "$work/src/apps/hub"
+"$python" -m venv "$work/venv"
+"$work/venv/bin/pip" install --quiet "$work"/wheels/*.whl
+
+check() {
+    local name="$1" prefix="$2" port
+    port="$("$work/venv/bin/python" -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
+    env "${prefix}_PORT=$port" "${prefix}_DATA_DIR=$work/data-$name" \
+        "$work/venv/bin/dyndnsarr-$name" 2>"$work/$name.log" &
+    pid=$!
+    for _ in $(seq 1 50); do
+        if "$work/venv/bin/python" - "$port" "$name" <<'PY' 2>/dev/null; then
+import json, sys, urllib.request
+body = json.load(urllib.request.urlopen(f"http://127.0.0.1:{sys.argv[1]}/healthz", timeout=1))
+sys.exit(0 if body["status"] == "ok" and body["component"] == sys.argv[2] else 1)
+PY
+            echo "OK: $name instalado desde wheel responde en /healthz"
+            kill "$pid"; wait "$pid" 2>/dev/null || true; pid=""
+            return 0
+        fi
+        sleep 0.2
+    done
+    echo "FALLO: $name no respondió en /healthz" >&2
+    cat "$work/$name.log" >&2
+    return 1
+}
+
+check agent DYNDNSARR_AGENT
+check hub DYNDNSARR_HUB
