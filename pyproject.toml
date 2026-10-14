@@ -27,6 +27,9 @@ extend-exclude = ["design_docs"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["dyndnsarr_shared", "dyndnsarr_agent", "dyndnsarr_hub"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
