@@ -1,6 +1,6 @@
 # Slice 1 — Monorepo y entorno
 
-- **Estado:** planificado
+- **Estado:** en implementación
 - **Fase (arquitectura):** 0 ([architecture.md](../architecture.md) §12)
 - **Rama:** `slice/01-bootstrap`
 - **PR:** — (contra `main`)
