@@ -1,9 +1,9 @@
 # Slice 2a — Observación de IP y DNS (motor DDNS, parte 1)
 
-- **Estado:** planificado
+- **Estado:** en implementación
 - **Fase (arquitectura):** 1, primera mitad ([architecture.md](../architecture.md) §7 pasos 1–3 y 7, §13)
 - **Rama:** `slice/02a-observacion-ip-dns`
-- **PR:** —
+- **PR:** pendiente de abrir (contra `main`): `gh` sin sesión válida (ver Evidencia)
 
 ## Objetivo
 
@@ -140,4 +140,26 @@ Commits pequeños, tests antes del código. Cada paso termina con `ruff` y `pyte
 
 ## Evidencia
 
-Se rellena al implementar.
+Rama `slice/02a-observacion-ip-dns` publicada en `origin`. Verificado el 2026-10-14 con Python 3.12.3 y 3.11.17:
+
+| Criterio | Resultado |
+|---|---|
+| 1. venv limpio 3.11 y 3.12: `ruff check`, `ruff format --check`, `pytest` | Verificado con 3.11.17 y 3.12.3: 193 tests, 0 fallos en ambos. |
+| 2. E2E: A/A + DNS=A → `verified`; fuentes a B → `ip_changed` y `mismatch`, un evento por transición | Verificado: `tests/e2e/test_ddns_engine.py::test_ip_change_is_reported_once_and_record_goes_to_mismatch` (procesos reales con servidores HTTP y DNS UDP falsos). El cambio de IP se observa al relanzar el Agent (el intervalo mínimo es 60 s); los ciclos periódicos se cubren con `run_forever` en `tests/integration/test_scheduler.py`. |
+| 3. Fuentes discrepantes o una caída → `uncertain`, `ip_uncertain` una sola vez; al coincidir, se retoma | Verificado en el e2e (`test_discrepancy_is_uncertain_once_and_resumes_when_sources_agree`, `test_one_source_down_is_uncertain`) y en `tests/integration/test_cycle.py`. |
+| 4. Tras parar y relanzar: historial intacto y comprobación inmediata | Verificado: e2e `test_restart_keeps_history_and_checks_immediately` y `tests/integration/test_scheduler.py` (dos instancias sobre la misma BD). |
+| 5. Config inválida, `managed` o archivo ausente aborta con mensaje claro; sin variable, arranca como en slice1 | Verificado en e2e (`test_invalid_config_aborts_startup_with_clear_message`, `test_missing_config_file_aborts_startup`), `tests/unit/test_ddns_config.py` y `tests/integration/test_scheduler.py`; el arranque sin variable lo cubren los tests del slice1 (`/healthz`, e2e de arranque) más `test_engine_is_disabled_without_config_file`. |
+| 6. Retención: se purga lo antiguo, no lo reciente | Verificado en `tests/unit/test_ddns_repo.py` y `tests/integration/test_cycle.py`. |
+| 7. `status`, `check-ip`, `check-dns` funcionan; `status` no escribe | Verificado en `tests/integration/test_cli.py` (filas y mtime de la BD intactos) y en el e2e con el CLI como subproceso. |
+| 8. Wheels en venv limpio ejecutan `dyndnsarr-agent status` | Verificado con 3.12 y 3.11 (`scripts/verify-wheels.sh` ampliado; `status` falla sin la migración 0002). |
+| 9. CI de GitHub en el PR | **Pendiente.** Rama publicada, pero el PR no se pudo abrir: el token de `gh` es inválido (`gh auth login -h github.com`). |
+
+Desviaciones respecto al diseño del plan (menores):
+
+- `events`: la clave primaria es `sequence INTEGER PRIMARY KEY AUTOINCREMENT` y `event_id` es `UNIQUE` (SQLite exige que `AUTOINCREMENT` sea la clave); el efecto es el mismo y `sequence` no se reutiliza tras purgar.
+- `app_state` guarda además `ip_status` (`confirmed`/`uncertain`) para emitir `ip_uncertain` solo al entrar.
+- La primera IP confirmada emite `ip_changed` con `previous: null`.
+- Las muestras DNS con varios registros A guardan las IP separadas por comas.
+- `dyndnsarr-agent` apunta ahora a `dyndnsarr_agent.cli:cli`; `python -m dyndnsarr_agent` sin argumentos sigue sirviendo.
+
+Pendiente del usuario: prueba manual en la Raspberry con un registro real (docs/operations.md §5).
