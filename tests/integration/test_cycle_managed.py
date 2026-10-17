@@ -261,15 +261,7 @@ def test_backoff_never_exceeds_an_hour(conn, world):
     waits = []
     for _ in range(10):
         s = state(conn)
-        waits.append(
-            int(
-                (
-                    ddns_repo.parse_iso(s.next_attempt_at) - ddns_repo.parse_iso(s.since)
-                ).total_seconds()
-            )
-            if False
-            else int((ddns_repo.parse_iso(s.next_attempt_at) - world.now).total_seconds())
-        )
+        waits.append(int((ddns_repo.parse_iso(s.next_attempt_at) - world.now).total_seconds()))
         cycle(conn, world, provider, advance=waits[-1])
     assert waits == [60, 120, 240, 480, 960, 1920, 3600, 3600, 3600, 3600]
 
@@ -364,15 +356,8 @@ def test_definitive_error_stops_automatic_retries_until_the_ip_changes(conn, wor
         "auth_failed",
     )
     assert event_types(conn).count("dns_update_failed") == 1
-    assert (
-        ddns_repo.list_events(conn, 10)[1].payload
-        == {
-            "code": "auth_failed",
-            "retryable": False,
-            "attempt": 1,
-        }
-        or True
-    )
+    failed = [e for e in ddns_repo.list_events(conn, 10) if e.type == "dns_update_failed"]
+    assert failed[0].payload == {"code": "auth_failed", "retryable": False, "attempt": 1}
     provider.default = OK
     world.set_ip("9.9.9.9")
     cycle(conn, world, provider)
