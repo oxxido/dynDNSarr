@@ -194,7 +194,7 @@ def test_check_commands_need_the_config_file(tmp_path, monkeypatch, capsys, comm
 def test_check_commands_report_an_invalid_config(env, capsys, command):
     env.config_file.write_text(TOML.replace("monitored", "managed"), encoding="utf-8")
     assert cli.run([command]) == 1
-    assert "slice 2b" in capsys.readouterr().err
+    assert "provider" in capsys.readouterr().err
 
 
 def test_invalid_environment_aborts_with_clear_message(tmp_path, monkeypatch):

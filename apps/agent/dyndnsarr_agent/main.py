@@ -12,7 +12,7 @@ from dyndnsarr_agent.api.health import router as health_router
 from dyndnsarr_agent.config import Settings
 from dyndnsarr_agent.db import MIGRATIONS, ddns_repo
 from dyndnsarr_agent.db.state import record_boot
-from dyndnsarr_agent.ddns.config import load_ddns_config
+from dyndnsarr_agent.ddns.config import load_ddns_config, require_provider_credentials
 from dyndnsarr_agent.dns.resolver import DnsObserver, DnspythonObserver
 from dyndnsarr_agent.scheduler import run_forever, utc_now
 from dyndnsarr_shared.db import connect, migrate
@@ -72,10 +72,16 @@ def create_app(
     observer: DnsObserver | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
-    """Crea la app. Con `config_file` carga y valida el TOML (lanza `ConfigError` si no vale)."""
+    """Crea la app. Con `config_file` carga y valida el TOML y las credenciales que exija.
+
+    Lanza `ConfigError` si algo no vale.
+    """
     app = FastAPI(title="DynDNSarr Agent", version=__version__, lifespan=lifespan)
     app.state.settings = settings
-    app.state.ddns_config = load_ddns_config(settings.config_file) if settings.config_file else None
+    ddns_config = load_ddns_config(settings.config_file) if settings.config_file else None
+    if ddns_config is not None:
+        require_provider_credentials(ddns_config, settings)
+    app.state.ddns_config = ddns_config
     app.state.ddns_observer = observer
     app.state.ddns_transport = transport
     app.state.ddns_task = None

@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     # TOML del motor DDNS (sin secretos). Sin él, el motor queda desactivado.
     config_file: Path | None = None
+    # Credenciales de DonDominio: solo por entorno, nunca en el TOML.
+    dondominio_user: SecretStr | None = None
+    dondominio_key: SecretStr | None = None
 
     @property
     def db_path(self) -> Path:

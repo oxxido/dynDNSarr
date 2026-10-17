@@ -150,7 +150,24 @@ def test_main_aborts_with_clear_message_on_managed_record(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as exc:
         main()
     assert exc.value.code not in (0, None)
-    assert "slice 2b" in str(exc.value.code)
+    assert "provider" in str(exc.value.code)
+
+
+def test_main_aborts_on_managed_record_without_credentials(tmp_path, monkeypatch):
+    from dyndnsarr_agent.__main__ import main
+
+    path = tmp_path / "agent.toml"
+    path.write_text(
+        TOML.replace("monitored", "managed") + 'provider = "dondominio"\n', encoding="utf-8"
+    )
+    monkeypatch.setenv("DYNDNSARR_AGENT_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("DYNDNSARR_AGENT_CONFIG_FILE", str(path))
+    monkeypatch.delenv("DYNDNSARR_AGENT_DONDOMINIO_USER", raising=False)
+    monkeypatch.delenv("DYNDNSARR_AGENT_DONDOMINIO_KEY", raising=False)
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert "DYNDNSARR_AGENT_DONDOMINIO_USER" in str(exc.value.code)
+    assert "DYNDNSARR_AGENT_DONDOMINIO_KEY" in str(exc.value.code)
 
 
 def test_main_aborts_when_config_file_is_missing(tmp_path, monkeypatch):

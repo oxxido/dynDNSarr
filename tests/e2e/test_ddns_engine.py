@@ -193,7 +193,7 @@ def test_cli_status_check_ip_and_check_dns_against_the_fakes(world):
 @pytest.mark.parametrize(
     "edit,fragment",
     [
-        (lambda t: t.replace("monitored", "managed"), "slice 2b"),
+        (lambda t: t.replace("monitored", "managed"), "provider"),
         (lambda t: t.replace("[dns]", "[dns]\nbogus = 1"), "bogus"),
     ],
 )

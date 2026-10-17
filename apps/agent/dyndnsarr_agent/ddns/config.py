@@ -5,7 +5,17 @@ from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+
+from dyndnsarr_agent.config import Settings
 
 _HOSTNAME = re.compile(
     r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
@@ -88,9 +98,40 @@ class Retention(_Section):
     events_days: int = Field(365, ge=1)
 
 
+class Update(_Section):
+    verify_retry_seconds: int = Field(60, ge=1)
+    verify_timeout_seconds: int = Field(900, ge=1)
+
+    @model_validator(mode="after")
+    def _check_timeout(self) -> "Update":
+        if self.verify_timeout_seconds < self.verify_retry_seconds:
+            raise ValueError("verify_timeout_seconds no puede ser menor que verify_retry_seconds")
+        return self
+
+
+class DonDominio(_Section):
+    url: str = "https://dondns.dondominio.com/json/"
+
+    @field_validator("url")
+    @classmethod
+    def _check_url(cls, url: str) -> str:
+        parts = urlsplit(url)
+        loopback_http = parts.scheme == "http" and parts.hostname in _LOOPBACK_HOSTS
+        if parts.scheme != "https" and not loopback_http:
+            raise ValueError("solo https (http únicamente para localhost/127.0.0.1)")
+        if not parts.hostname or parts.username is not None:
+            raise ValueError("URL no válida (sin credenciales en la URL)")
+        return url
+
+
+class Providers(_Section):
+    dondominio: DonDominio = DonDominio()
+
+
 class Record(_Section):
     name: str
-    mode: Literal["monitored"]
+    mode: Literal["monitored", "managed"]
+    provider: Literal["dondominio"] | None = None
     enabled: bool = True
 
     @field_validator("name")
@@ -101,14 +142,13 @@ class Record(_Section):
             raise ValueError("no es un nombre de host válido")
         return name
 
-    @field_validator("mode", mode="before")
-    @classmethod
-    def _check_mode(cls, mode: object) -> object:
-        if mode == "managed":
-            raise ValueError('mode = "managed" aún no está disponible: llega en el slice 2b')
-        if mode != "monitored":
-            raise ValueError('debe ser "monitored"')
-        return mode
+    @model_validator(mode="after")
+    def _check_provider(self) -> "Record":
+        if self.mode == "managed" and self.provider is None:
+            raise ValueError('un registro "managed" necesita provider = "dondominio"')
+        if self.mode == "monitored" and self.provider is not None:
+            raise ValueError('un registro "monitored" no usa provider: nunca se escribe')
+        return self
 
 
 class DdnsConfig(_Section):
@@ -116,6 +156,8 @@ class DdnsConfig(_Section):
     ip_sources: IpSources
     dns: Dns
     retention: Retention = Retention()
+    update: Update = Update()
+    providers: Providers = Providers()
     records: list[Record] = []
 
     @field_validator("records")
@@ -125,6 +167,25 @@ class DdnsConfig(_Section):
         if len(set(names)) != len(names):
             raise ValueError("hay registros repetidos")
         return records
+
+
+def require_provider_credentials(config: DdnsConfig, settings: Settings) -> None:
+    """Un registro `managed` habilitado necesita las credenciales del proveedor (por entorno)."""
+    if not any(r.mode == "managed" and r.enabled for r in config.records):
+        return
+    missing = [
+        f"{Settings.model_config['env_prefix']}{name.upper()}"
+        for name, secret in (
+            ("dondominio_user", settings.dondominio_user),
+            ("dondominio_key", settings.dondominio_key),
+        )
+        if secret is None or not secret.get_secret_value()
+    ]
+    if missing:
+        raise ConfigError(
+            "hay registros managed habilitados y faltan las credenciales de DonDominio: "
+            + ", ".join(missing)
+        )
 
 
 def load_ddns_config(path: Path) -> DdnsConfig:
