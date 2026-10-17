@@ -12,7 +12,8 @@ from dyndnsarr_agent.db import MIGRATIONS
 from dyndnsarr_agent.ddns.config import ConfigError, DdnsConfig
 from dyndnsarr_agent.dns.resolver import ResolverAnswer
 from dyndnsarr_agent.main import create_app
-from dyndnsarr_agent.scheduler import run_forever
+from dyndnsarr_agent.providers.base import UpdateResult
+from dyndnsarr_agent.scheduler import run_forever, try_lock
 from dyndnsarr_shared.db import connect, migrate
 
 IP = "1.2.3.4"
@@ -223,3 +224,169 @@ def test_run_forever_survives_a_failed_cycle_and_keeps_the_interval(tmp_path):
         ("ip_changed",),
         ("dns_verified",),
     ]
+
+
+# --- cadencia y bloqueo del slice 2b ---
+
+
+MANAGED_CONFIG = {
+    "check_interval_seconds": 300,
+    "update": {"verify_retry_seconds": 60, "verify_timeout_seconds": 900},
+    "ip_sources": {"urls": ["https://a.example/ip", "https://b.example/ip"]},
+    "dns": {"resolvers": ["1.1.1.1"]},
+    "records": [{"name": NAME, "mode": "managed", "provider": "dondominio"}],
+}
+
+
+class StaleObserver:
+    """El DNS sigue apuntando a otra IP: tras actualizar queda pendiente de verificación."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def lookup(self, name):
+        self.calls += 1
+        return [ResolverAnswer("1.1.1.1", ("9.9.9.9",), None)]
+
+
+class RecordingProvider:
+    def __init__(self, result=None):
+        self.result = result or UpdateResult(True, changed=True)
+        self.calls = []
+
+    async def update(self, host, ip):
+        self.calls.append((host, ip))
+        return self.result
+
+
+def drive_managed(tmp_path, provider, cycles, lock_path=None):
+    conn = connect(tmp_path / "agent.db")
+    migrate(conn, MIGRATIONS)
+    sleeps = []
+
+    async def sleep(seconds):
+        if seconds == 2.0:  # pausa entre llamadas del ciclo: no es la espera del bucle
+            return
+        sleeps.append(seconds)
+        if len(sleeps) >= cycles:
+            raise Stop
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(sources)) as client:
+            await run_forever(
+                conn,
+                DdnsConfig.model_validate(MANAGED_CONFIG),
+                client,
+                StaleObserver(),
+                sleep=sleep,
+                providers={"dondominio": provider},
+                lock_path=lock_path,
+            )
+
+    with pytest.raises(Stop):
+        asyncio.run(go())
+    return sleeps, conn
+
+
+def test_pending_verification_wakes_the_loop_in_verify_retry_seconds(tmp_path):
+    provider = RecordingProvider()
+    sleeps, conn = drive_managed(tmp_path, provider, cycles=3)
+    assert sleeps == [60, 60, 60]  # con un intervalo de 300
+    assert provider.calls == [(NAME, IP)]  # una sola llamada aunque se verifique varias veces
+
+
+def test_backoff_wakes_the_loop_when_the_retry_is_due(tmp_path):
+    provider = RecordingProvider(UpdateResult(False, error_code="http_error", retryable=True))
+    sleeps, _ = drive_managed(tmp_path, provider, cycles=1)
+    assert 1 <= sleeps[0] <= 60
+
+
+def test_definitive_error_leaves_the_regular_interval(tmp_path):
+    provider = RecordingProvider(UpdateResult(False, error_code="auth_failed", retryable=False))
+    sleeps, _ = drive_managed(tmp_path, provider, cycles=2)
+    assert sleeps == [300, 300]
+    assert len(provider.calls) == 1
+
+
+def test_a_cycle_with_the_lock_held_is_skipped_without_stopping_the_loop(tmp_path, caplog):
+    lock = tmp_path / "ddns.lock"
+    provider = RecordingProvider()
+    with caplog.at_level(logging.INFO), try_lock(lock) as taken:
+        assert taken is True
+        sleeps, conn = drive_managed(tmp_path, provider, cycles=2, lock_path=lock)
+    assert sleeps == [300, 300]
+    assert provider.calls == []
+    assert conn.execute("SELECT count(*) FROM events").fetchone() == (0,)
+    assert "cycle_skipped" in [r.getMessage() for r in caplog.records]
+    sleeps, _ = drive_managed(tmp_path, provider, cycles=1, lock_path=lock)  # libre: corre
+    assert provider.calls == [(NAME, IP)]
+
+
+def test_try_lock_is_exclusive_and_released_on_exit(tmp_path):
+    lock = tmp_path / "ddns.lock"
+    with try_lock(lock) as first:
+        with try_lock(lock) as second:
+            assert (first, second) == (True, False)
+        with try_lock(lock) as still_blocked:
+            assert still_blocked is False
+    with try_lock(lock) as again:
+        assert again is True
+    assert oct(lock.stat().st_mode & 0o777) == "0o600"
+
+
+def test_the_lock_is_released_when_the_task_is_cancelled_mid_cycle(tmp_path):
+    lock = tmp_path / "ddns.lock"
+
+    class Hanging:
+        async def lookup(self, name):
+            await asyncio.sleep(30)
+
+    async def go():
+        conn = connect(tmp_path / "agent.db")
+        migrate(conn, MIGRATIONS)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(sources)) as client:
+            task = asyncio.create_task(
+                run_forever(
+                    conn,
+                    DdnsConfig.model_validate(MANAGED_CONFIG),
+                    client,
+                    Hanging(),
+                    lock_path=lock,
+                )
+            )
+            await asyncio.sleep(0.2)
+            with try_lock(lock) as while_running:
+                assert while_running is False
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        with try_lock(lock) as after_cancel:
+            assert after_cancel is True
+
+    asyncio.run(go())
+
+
+def test_app_wires_provider_and_lock_into_the_daemon(tmp_path, monkeypatch):
+    monkeypatch.setenv("DYNDNSARR_AGENT_DONDOMINIO_USER", "u")
+    monkeypatch.setenv("DYNDNSARR_AGENT_DONDOMINIO_KEY", "k")
+    path = tmp_path / "agent.toml"
+    path.write_text(TOML.replace("monitored", "managed") + 'provider = "dondominio"\n')
+    seen = []
+
+    def handler(request):
+        if request.url.host == "dondns.dondominio.com":
+            seen.append(dict(request.url.params))
+            data = {"success": True, "messages": [], "host": {"value": IP, "updated": True}}
+            return httpx.Response(200, json=data)
+        return sources(request)
+
+    settings = Settings(data_dir=tmp_path / "data", config_file=path)
+    app = create_app(settings, observer=StaleObserver(), transport=httpx.MockTransport(handler))
+    with TestClient(app):
+        wait_for(
+            settings,
+            "SELECT type FROM events ORDER BY sequence",
+            [("agent_started",), ("ip_changed",), ("dns_update_succeeded",)],
+        )
+    assert seen[0]["host"] == NAME and seen[0]["ip"] == IP and seen[0]["lang"] == "en"
+    assert (tmp_path / "data" / "ddns.lock").exists()

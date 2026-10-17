@@ -21,5 +21,10 @@ class Settings(BaseSettings):
     dondominio_key: SecretStr | None = None
 
     @property
+    def lock_path(self) -> Path:
+        """Bloqueo (`flock`) que coordina el ciclo del daemon con `sync-ddns`."""
+        return self.data_dir / "ddns.lock"
+
+    @property
     def db_path(self) -> Path:
         return self.data_dir / "agent.db"
