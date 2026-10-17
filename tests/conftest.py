@@ -1,9 +1,11 @@
 import http.server
 import importlib
+import json
 import socketserver
 import threading
 from dataclasses import dataclass
 from types import ModuleType
+from urllib.parse import parse_qs, urlsplit
 
 import dns.flags
 import dns.message
@@ -158,3 +160,61 @@ def make_fake_ip_source():
     yield make
     for source in sources:
         source.close()
+
+
+class FakeDonDominio:
+    """Servidor HTTP en loopback que imita a DonDNS (`GET /json/`).
+
+    `calls` guarda los parámetros de cada petición. `mode`: "ok" (acepta), "down" (503) o "auth"
+    (`Wrong key`). Al aceptar, si `propagate`, cambia lo que responde `dns` (el DNS falso).
+    """
+
+    def __init__(self, dns: "FakeDns") -> None:
+        self.dns = dns
+        self.mode = "ok"
+        self.propagate = True
+        self.calls: list[dict[str, str]] = []
+        fake = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                params = {k: v[0] for k, v in parse_qs(urlsplit(self.path).query).items()}
+                fake.calls.append(params)
+                status, body = 200, None
+                if fake.mode == "down":
+                    status, body = 503, b"unavailable"
+                elif fake.mode == "auth":
+                    body = json.dumps({"success": False, "messages": ["Wrong key"]}).encode()
+                else:
+                    if fake.propagate:
+                        fake.dns.answers[params["host"]] = [params["ip"]]
+                    host = {"name": params["host"], "value": params["ip"], "updated": True}
+                    body = json.dumps({"success": True, "messages": [], "host": host}).encode()
+                self.send_response(status)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args) -> None:
+                pass
+
+        self._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._thread = threading.Thread(
+            target=self._server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True
+        )
+        self._thread.start()
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self._server.server_address[1]}/json/"
+
+    def close(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+
+
+@pytest.fixture
+def fake_dondominio(fake_dns):
+    server = FakeDonDominio(fake_dns)
+    yield server
+    server.close()

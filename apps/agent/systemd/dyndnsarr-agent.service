@@ -9,6 +9,8 @@ User=dyndnsarr
 Group=dyndnsarr
 # Para activar el motor DDNS, definir DYNDNSARR_AGENT_CONFIG_FILE=/etc/dyndnsarr/agent.toml en
 # agent.env (docs/operations.md §5). Con ProtectSystem=strict, /etc es de solo lectura: basta.
+# Las credenciales de DonDominio (registros managed) van también en agent.env (0600), nunca en
+# el TOML ni en este archivo.
 EnvironmentFile=/etc/dyndnsarr/agent.env
 ExecStart=/opt/dyndnsarr/venv/bin/dyndnsarr-agent
 Restart=always

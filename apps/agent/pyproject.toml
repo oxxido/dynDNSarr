@@ -26,6 +26,7 @@ packages = [
     "dyndnsarr_agent.db",
     "dyndnsarr_agent.ddns",
     "dyndnsarr_agent.dns",
+    "dyndnsarr_agent.providers",
 ]
 
 [tool.setuptools.package-data]

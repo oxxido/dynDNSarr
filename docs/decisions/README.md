@@ -7,3 +7,4 @@ Una decisión que debe sobrevivir a un slice se registra aquí: `NNNN-titulo-cor
 | [0001](0001-arquitectura-prevalece-sobre-prd.md) | La arquitectura prevalece sobre el PRD |
 | [0002](0002-python-3-11.md) | Python 3.11 como versión mínima |
 | [0003](0003-motor-ddns-observacion.md) | Configuración TOML, scheduler asyncio y consenso de IP del motor DDNS |
+| [0004](0004-actualizacion-ddns-dondominio.md) | API DonDominio, credenciales, backoff y verificación de la actualización `managed` |

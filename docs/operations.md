@@ -84,9 +84,9 @@ Los dos componentes son una SQLite en modo WAL. Las copias contienen datos de co
   ```
   Estos comandos de backup/restauración siguen el procedimiento estándar de volúmenes, pero no están automatizados ni se probaron en CI.
 
-## 5. Motor DDNS del Agent: observación de IP y DNS (slice 2a)
+## 5. Motor DDNS del Agent: observación y actualización (slices 2a y 2b)
 
-El Agent, sin Hub, detecta su IPv4 pública con varias fuentes, pregunta a resolvers externos qué resuelven tus registros y guarda muestras y eventos en su SQLite. **No escribe DNS**: la actualización en DonDominio llega en el slice 2b, y los registros `mode = "managed"` se rechazan hasta entonces.
+El Agent, sin Hub, detecta su IPv4 pública con varias fuentes, pregunta a resolvers externos qué resuelven tus registros y guarda muestras y eventos en su SQLite. Los registros `mode = "monitored"` solo se observan y **nunca se escriben**; los `mode = "managed"` se actualizan en DonDominio cuando la IP pública confirmada difiere de lo que resuelven los resolvers.
 
 ### Configuración
 
@@ -105,13 +105,43 @@ Sin la variable el Agent arranca como en el slice 1 (motor desactivado). Con ell
 | `dns.resolvers` | — | Mínimo 1: `"ip"` o `"ip:puerto"`. Deben ser externos: no uses solo el Pi-hole. |
 | `retention.samples_days` | 30 | Muestras de IP y comprobaciones DNS. |
 | `retention.events_days` | 365 | Eventos. La purga se hace al final de cada ciclo. |
-| `[[records]]` `name`, `mode`, `enabled` | `enabled = true` | `mode` solo `"monitored"` por ahora. |
+| `[[records]]` `name`, `mode`, `provider`, `enabled` | `enabled = true` | `mode`: `"monitored"` o `"managed"`. `provider = "dondominio"` es obligatorio en `managed` y no se admite en `monitored`. |
+| `update.verify_retry_seconds` | 60 | Mínimo 1. Cada cuánto se comprueba un registro `pending_verification`. |
+| `update.verify_timeout_seconds` | 900 | No menor que el anterior. Plazo de propagación antes de `dns_verification_failed`. No está medido: ajústalo tras la prueba manual. |
+| `providers.dondominio.url` | `https://dondns.dondominio.com/json/` | Solo para pruebas (`http://` únicamente a `localhost`/`127.0.0.1`). |
 
 ### Qué significan los resultados
 
 - **IP pública `confirmed`**: responden al menos 2 fuentes y todas coinciden en una IPv4 pública. Cualquier otra cosa (una fuente caída, discrepancia, IP privada o basura) es **`uncertain`**: no se registra cambio de IP y se reintenta en el siguiente ciclo. Si una fuente está caída para siempre, la IP queda incierta: cámbiala en el TOML.
 - **Registro `verified`**: todos los resolvers que responden devuelven exactamente la IP pública. **`mismatch`**: alguno devuelve otra cosa (puede ser transitorio por la caché del resolver hasta el TTL). **`unknown`**: ningún resolver respondió (NXDOMAIN, timeout…). Con la IP incierta no se reclasifica.
-- **Eventos** (una fila por *cambio de estado*, no por comprobación): `agent_started`, `ip_changed` (la primera IP confirmada también lo emite, con `previous` nulo), `ip_uncertain` (solo al entrar en incertidumbre), `dns_verified`, `dns_mismatch`. Llevan `event_id`, `sequence` creciente y `occurred_at` en UTC.
+- **Eventos** (una fila por *cambio de estado*, no por comprobación): `agent_started`, `ip_changed` (la primera IP confirmada también lo emite, con `previous` nulo), `ip_uncertain` (solo al entrar en incertidumbre), `dns_verified`, `dns_mismatch`, y para `managed`: `dns_update_succeeded` (`ip`, `changed`), `dns_update_failed` (`code`, `retryable`, `attempt`; solo al empezar una racha de fallos o al cambiar el código) y `dns_verification_failed` (`ip`, `waited_seconds`). Llevan `event_id`, `sequence` creciente y `occurred_at` en UTC. Ninguno lleva credenciales ni URL.
+
+### Registros `managed` (DonDominio)
+
+1. Crea antes el registro **A** en la zona, a mano: el Agent no crea registros y un CNAME no sirve (DonDominio responde `The DNS Zone doesn't exist`, error definitivo).
+2. Añade las credenciales de DonDNS a `/etc/dyndnsarr/agent.env` (debe ser `0600`, dueño `root`; nunca en el TOML):
+   ```
+   DYNDNSARR_AGENT_DONDOMINIO_USER=tu-usuario
+   DYNDNSARR_AGENT_DONDOMINIO_KEY=tu-clave
+   ```
+   Un registro `managed` habilitado sin ellas impide arrancar (el mensaje nombra las variables que faltan). Sin registros `managed` no hacen falta.
+3. En el TOML: `mode = "managed"` y `provider = "dondominio"`. Reinicia el servicio.
+4. **Respalda `agent.db` antes de actualizar** (§4): la migración 0003 reconstruye `record_state` y no hay vuelta atrás automática.
+
+Cómo actúa: con la IP pública **confirmada**, si todos los resolvers que responden devuelven otra IP, hace **una** llamada a DonDominio con esa IP. Que el proveedor acepte no es que el DNS ya resuelva bien:
+
+| Estado del registro | Significa |
+|---|---|
+| `pending_verification` | El proveedor aceptó la IP; se espera a que los resolvers la devuelvan. No se vuelve a llamar mientras tanto. |
+| `verified` | Los resolvers ya devuelven la IP. |
+| `mismatch` | Los resolvers devuelven otra IP y no hay una actualización aceptada vigente (fallo del proveedor, espera de reintento o error definitivo). |
+| `unknown` | Ningún resolver responde. |
+
+- **Plazo vencido** (`verify_timeout_seconds` sin que el DNS converja): evento `dns_verification_failed` y se vuelve a llamar. Con un CNAME o una zona mal delegada esto se repite cada plazo; revisa la zona.
+- **Fallo del proveedor** (5xx, timeout, 429, respuesta ilegible): reintento con espera de 60 s, 120 s, 240 s… hasta 1 h; la espera se guarda y sobrevive a un reinicio. Una IP nueva no hereda la espera de la anterior.
+- **Error definitivo** (`auth_failed`: usuario o clave incorrectos; `host_not_found`: el registro A no existe o el dominio no es tuyo): no hay reintentos automáticos para esa IP. Corrige la causa y ejecuta `sync-ddns`, o espera a un cambio de IP. DonDominio no documenta sus códigos de error: un mensaje desconocido se trata como `rejected` y se reintenta (como mucho cada hora) en lugar de bloquear.
+- **Límite de tasa:** DonDominio responde 429 si se le llama más de unas 5 veces en pocos segundos. El Agent hace como mucho una llamada por registro y ciclo, con 2 s de pausa entre registros.
+- **IP incierta:** nunca se llama.
 
 ### Consola
 
@@ -127,9 +157,22 @@ sudo -u dyndnsarr env DYNDNSARR_AGENT_CONFIG_FILE=/etc/dyndnsarr/agent.toml \
 | `status` | IP pública, estado de cada registro y últimos eventos. Solo lee. | 1 si no hay BD o falta el esquema |
 | `check-ip` | Consulta las fuentes ahora y guarda las muestras; no cambia estado ni emite eventos. | 1 si la IP es incierta |
 | `check-dns` | Pregunta a los resolvers por cada registro y compara con la última IP confirmada; guarda las muestras. | 0 aunque haya `mismatch`; 1 si falla la configuración |
+| `sync-ddns` | Un pase manual de los registros `managed`: observa IP y DNS y actualiza donde haga falta, **ignorando la espera de backoff y el bloqueo por error definitivo** (no la IP ya aceptada dentro de plazo). Hace un pase y sale: no espera a la verificación (la completa el daemon o `check-dns`). Funciona con el daemon parado. | 1 si hay un ciclo del daemon en curso (`ddns.lock`), la IP es incierta o el proveedor falla |
 
-`status` no necesita `DYNDNSARR_AGENT_CONFIG_FILE`; `check-ip` y `check-dns` sí. Los tres leen `DYNDNSARR_AGENT_DATA_DIR` (por defecto `/var/lib/dyndnsarr`).
+`status` no necesita `DYNDNSARR_AGENT_CONFIG_FILE`; `check-ip`, `check-dns` y `sync-ddns` sí, y `sync-ddns` además las credenciales de DonDominio. Todos leen `DYNDNSARR_AGENT_DATA_DIR` (por defecto `/var/lib/dyndnsarr`). `status` muestra, por registro, la IP aceptada por el proveedor, la próxima espera de reintento y el último error.
+
+`sudo -u` no hereda tu entorno y no conviene poner la clave en la línea de comandos (queda en `ps` y en el historial). Carga `agent.env` como root y cambia de usuario con `runuser`, que conserva el entorno:
+
+```bash
+sudo bash -c 'set -a; . /etc/dyndnsarr/agent.env; set +a; \
+    exec runuser -u dyndnsarr -- /opt/dyndnsarr/venv/bin/dyndnsarr-agent sync-ddns'
+```
+
+Esto exige que los valores de `agent.env` sean válidos también como shell (sin espacios ni caracteres especiales). No se ha probado en la Raspberry en este slice.
+
+El Agent y `sync-ddns` se coordinan con un `flock` sobre `<data_dir>/ddns.lock`: el daemon salta el ciclo si `sync-ddns` está en marcha, y `sync-ddns` sale con 1 si el daemon está en pleno ciclo (reintenta en unos segundos).
 
 ### Comprobación manual
 
-Con `home.example.com` apuntando ya a tu IP: arranca el Agent, espera un ciclo y ejecuta `status` (el registro debe estar `verified`). Reinicia el servicio: `status` conserva el historial y se hace una comprobación inmediata.
+- **`monitored`:** con `home.example.com` apuntando ya a tu IP: arranca el Agent, espera un ciclo y ejecuta `status` (el registro debe estar `verified`). Reinicia el servicio: `status` conserva el historial y se hace una comprobación inmediata.
+- **`managed`** (con un subdominio de prueba, no el de producción): deja el registro A apuntando a otra IP, configúralo como `managed` y ejecuta `sync-ddns`. Debe salir `pending_verification`; deja el daemon corriendo y repite `status` hasta ver `verified`, y confirma desde fuera con `dig +short ddns.example.com @1.1.1.1`. Anota cuánto tardó y ajusta `verify_timeout_seconds`.

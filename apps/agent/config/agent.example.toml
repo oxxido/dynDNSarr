@@ -16,7 +16,25 @@ resolvers = ["1.1.1.1", "8.8.8.8"]
 samples_days = 30     # muestras de IP y comprobaciones DNS
 events_days = 365
 
+[update]
+# Solo cuentan para registros "managed". La propagación del DNS puede tardar: tras aceptar la
+# actualización el registro queda `pending_verification` y se comprueba cada `verify_retry_seconds`
+# hasta `verify_timeout_seconds` (valor prudente, no medido).
+verify_retry_seconds = 60       # mínimo 1
+verify_timeout_seconds = 900    # no menor que verify_retry_seconds
+
+# [providers.dondominio]
+# url = "https://dondns.dondominio.com/json/"   # solo se cambia para pruebas (http solo a localhost)
+
 [[records]]
 name = "home.example.com"
-mode = "monitored"    # solo se observa; "managed" llega en el slice 2b
+mode = "monitored"    # solo se observa; nunca se escribe
 enabled = true
+
+# Un registro "managed" se actualiza en DonDominio cuando la IP pública confirmada difiere de lo
+# que resuelven los resolvers. El registro A debe existir ya en la zona (no un CNAME). Necesita
+# DYNDNSARR_AGENT_DONDOMINIO_USER y DYNDNSARR_AGENT_DONDOMINIO_KEY en agent.env (nunca aquí).
+# [[records]]
+# name = "ddns.example.com"
+# mode = "managed"
+# provider = "dondominio"
