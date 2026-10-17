@@ -1,9 +1,9 @@
 # Slice 2b — Actualización DDNS `managed` (DonDominio) (motor DDNS, parte 2)
 
-- **Estado:** en implementación
+- **Estado:** en revisión
 - **Fase (arquitectura):** 1, segunda mitad ([architecture.md](../architecture.md) §7 pasos 4–6, §13 casos 1, 2 y 4)
 - **Rama:** `slice/02b-actualizacion-ddns-managed`
-- **PR:** —
+- **PR:** [#3](https://github.com/oxxido/dynDNSarr/pull/3) (abierto contra `main`, sin fusionar)
 
 ## Objetivo
 
@@ -184,7 +184,7 @@ Rama `slice/02b-actualizacion-ddns-managed`. Verificado el 2026-10-17 con Python
 | 7. Ni la clave ni la URL con la clave en logs, eventos, BD ni salida del CLI | Verificado con valor canario: `tests/unit/test_dondominio.py` (con el `setup_logging` real), `tests/integration/test_cli.py::test_the_key_never_shows_…` y e2e `test_the_key_does_not_leak_anywhere` (stderr del daemon, salida del CLI y volcado completo de la BD). Una prueba documenta que sin `setup_logging` el INFO de `httpx` sí imprimiría la clave. |
 | 8. `sync-ddns` con el daemon parado y sin coincidir con un ciclo (`flock`); `status` no escribe | Verificado: e2e `test_sync_ddns_does_not_overlap_with_a_running_cycle` y `test_provider_down_…` (daemon parado), `test_cli.py::test_sync_ddns_with_the_lock_taken_…`, `test_status_still_does_not_write_with_managed_records`; `test_scheduler.py` (ciclo saltado con el bloqueo tomado, bloqueo liberado al cancelar). |
 | 9. Wheels en venv limpio ejecutan `status` (migración 0003 y `providers` viajan) | Verificado con 3.11 y 3.12 (`scripts/verify-wheels.sh`, que ahora importa `dyndnsarr_agent.providers`). |
-| 10. CI de GitHub en el PR | Ver «Entrega» más abajo. |
+| 10. CI de GitHub en el PR | **Parcial.** `test (3.11)` y `test (3.12)` pasan en el PR #3. `hub-image` falla (`FALLO: boot_count 1 -> 3 (se esperaba +1)` en `scripts/verify-compose.sh`), igual que en los merges de #1 y #2 en `main`: es previo a este slice, que no toca el Hub, y queda sin corregir aquí. |
 | 11. Manual del usuario: subdominio de prueba real, `pending_verification` → `verified`, `dig` desde fuera | **Pendiente del usuario** (docs/operations.md §5, «Comprobación manual»). Anota el tiempo de propagación observado para ajustar `verify_timeout_seconds`. |
 
 Desviaciones respecto al diseño del plan (menores):
