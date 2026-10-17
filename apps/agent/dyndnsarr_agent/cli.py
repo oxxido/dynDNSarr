@@ -10,13 +10,19 @@ from pydantic import ValidationError
 
 from dyndnsarr_agent.config import Settings
 from dyndnsarr_agent.db import MIGRATIONS, ddns_repo
-from dyndnsarr_agent.ddns.config import ConfigError, DdnsConfig, load_ddns_config
-from dyndnsarr_agent.ddns.cycle import classify, record_dns_samples, record_ip_samples
+from dyndnsarr_agent.ddns.config import (
+    ConfigError,
+    DdnsConfig,
+    load_ddns_config,
+    require_provider_credentials,
+)
+from dyndnsarr_agent.ddns.cycle import classify, record_dns_samples, record_ip_samples, run_cycle
 from dyndnsarr_agent.ddns.ip_sources import detect_public_ip
 from dyndnsarr_agent.dns.resolver import DnsObserver, DnspythonObserver
 from dyndnsarr_agent.logging_setup import setup_logging
 from dyndnsarr_agent.main import create_app
-from dyndnsarr_agent.scheduler import utc_now
+from dyndnsarr_agent.providers.registry import build_providers
+from dyndnsarr_agent.scheduler import try_lock, utc_now
 from dyndnsarr_shared.db import connect, migrate, transaction
 
 
@@ -60,9 +66,7 @@ def _status(settings: Settings, **_: object) -> int:
         last_check = conn.execute("SELECT max(observed_at) FROM public_ip_observations").fetchone()[
             0
         ]
-        records = conn.execute(
-            "SELECT record_name, verification, since FROM record_state ORDER BY record_name"
-        ).fetchall()
+        records = ddns_repo.list_record_states(conn)
         events = ddns_repo.list_events(conn, limit=5)
     except sqlite3.OperationalError:
         print(
@@ -81,8 +85,16 @@ def _status(settings: Settings, **_: object) -> int:
     else:
         print(f"IP pública: incierta (última confirmada: {ip or 'ninguna'}, el {confirmed_at})")
     print("Registros:")
-    for name, verification, since in records:
-        print(f"  {name}  {verification}  desde {since}")
+    for record in records:
+        print(f"  {record.record_name}  {record.verification}  desde {record.since}")
+        if record.accepted_ip:
+            print(f"    aceptada por el proveedor: {record.accepted_ip} el {record.accepted_at}")
+        if record.failures:
+            failure = f"{record.failures} fallo(s), último error: {record.last_error_code}"
+            if record.next_attempt_at:
+                print(f"    reintento a partir de {record.next_attempt_at} ({failure})")
+            else:
+                print(f"    sin reintentos automáticos ({failure}): usa sync-ddns")
     if not records:
         print("  (ninguno observado)")
     print("Últimos eventos:")
@@ -171,7 +183,77 @@ def _check_dns(settings: Settings, observer: DnsObserver | None = None, **_: obj
     return 0
 
 
-_COMMANDS = {"status": _status, "check-ip": _check_ip, "check-dns": _check_dns}
+_DEDUPLICATED = {
+    "verified": "el DNS ya resuelve la IP: sin llamada",
+    "pending_verification": "IP ya aceptada, esperando propagación: sin llamada",
+}
+
+
+def _sync_ddns(
+    settings: Settings,
+    observer: DnsObserver | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+    **_: object,
+) -> int:
+    """Un pase manual de los registros `managed`: como el ciclo, pero sin esperar el backoff."""
+    config = _load_ddns(settings)
+    if config is None:
+        return 1
+    try:
+        require_provider_credentials(config, settings)
+    except ConfigError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    managed = [r for r in config.records if r.mode == "managed" and r.enabled]
+    if not managed:
+        print("No hay registros managed habilitados: nada que sincronizar.")
+        return 0
+    config = config.model_copy(update={"records": managed})
+    observer = observer or DnspythonObserver(config.dns.resolvers)
+
+    async def go():
+        async with httpx.AsyncClient(transport=transport) as client:
+            providers = build_providers(config, settings, client)
+            return await run_cycle(conn, config, client, observer, utc_now, providers, manual=True)
+
+    conn = _open_db(settings)
+    try:
+        with try_lock(settings.lock_path) as taken:
+            if not taken:
+                print(
+                    "Hay un ciclo del Agent en curso (ddns.lock): vuelve a intentarlo en unos "
+                    "segundos.",
+                    file=sys.stderr,
+                )
+                return 1
+            result = asyncio.run(go())
+    finally:
+        conn.close()
+    if result.ip_status != "confirmed":
+        print("IP pública incierta: no se actualiza nada.", file=sys.stderr)
+        return 1
+    print(f"IP pública confirmada: {result.public_ip}")
+    failed = False
+    for name, verification in result.records.items():
+        update = result.updates.get(name)
+        if update is None:
+            detail = _DEDUPLICATED.get(verification, "sin llamada")
+        elif update.accepted:
+            detail = "actualizado" if update.changed else "el proveedor ya la tenía"
+        else:
+            failed = True
+            kind = "reintentable" if update.retryable else "definitivo"
+            detail = f"fallo del proveedor: {update.error_code} ({kind})"
+        print(f"  {name}  {verification}  {detail}")
+    return 1 if failed else 0
+
+
+_COMMANDS = {
+    "status": _status,
+    "check-ip": _check_ip,
+    "check-dns": _check_dns,
+    "sync-ddns": _sync_ddns,
+}
 
 
 def run(
@@ -186,6 +268,10 @@ def run(
     sub.add_parser("check-ip", help="detecta la IP pública y guarda las muestras")
     sub.add_parser(
         "check-dns", help="consulta los resolvers por los registros y guarda las muestras"
+    )
+    sub.add_parser(
+        "sync-ddns",
+        help="actualiza ahora los registros managed (ignora la espera de backoff)",
     )
     args = parser.parse_args(argv)
     if args.command in (None, "serve"):
