@@ -6,7 +6,16 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 EVENT_TYPES = frozenset(
-    {"agent_started", "ip_changed", "ip_uncertain", "dns_verified", "dns_mismatch"}
+    {
+        "agent_started",
+        "ip_changed",
+        "ip_uncertain",
+        "dns_verified",
+        "dns_mismatch",
+        "dns_update_succeeded",
+        "dns_update_failed",
+        "dns_verification_failed",
+    }
 )
 
 
@@ -25,11 +34,32 @@ class Event:
     payload: dict[str, Any]
 
 
+def parse_iso(text: str) -> datetime:
+    return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+
+
 @dataclass(frozen=True)
 class RecordState:
+    """Estado de un registro. Los campos de actualización solo los usan los `managed`.
+
+    `failures > 0` con `next_attempt_at` nulo es un error definitivo (sin reintento automático).
+    """
+
     record_name: str
     verification: str
     since: str
+    accepted_ip: str | None = None
+    accepted_at: str | None = None
+    failures: int = 0
+    failure_ip: str | None = None
+    next_attempt_at: str | None = None
+    last_error_code: str | None = None
+
+
+_RECORD_STATE_COLUMNS = (
+    "record_name, verification, since, accepted_ip, accepted_at, "
+    "failures, failure_ip, next_attempt_at, last_error_code"
+)
 
 
 def get_state(conn: sqlite3.Connection, key: str) -> str | None:
@@ -72,10 +102,16 @@ def insert_dns_check(
 
 def get_record_state(conn: sqlite3.Connection, record_name: str) -> RecordState | None:
     row = conn.execute(
-        "SELECT record_name, verification, since FROM record_state WHERE record_name = ?",
-        (record_name,),
+        f"SELECT {_RECORD_STATE_COLUMNS} FROM record_state WHERE record_name = ?", (record_name,)
     ).fetchone()
     return RecordState(*row) if row else None
+
+
+def list_record_states(conn: sqlite3.Connection) -> list[RecordState]:
+    rows = conn.execute(
+        f"SELECT {_RECORD_STATE_COLUMNS} FROM record_state ORDER BY record_name"
+    ).fetchall()
+    return [RecordState(*row) for row in rows]
 
 
 def set_record_state(
@@ -86,6 +122,43 @@ def set_record_state(
         "ON CONFLICT (record_name) DO UPDATE SET "
         "verification = excluded.verification, since = excluded.since",
         (record_name, verification, iso(since)),
+    )
+
+
+def save_record_state(conn: sqlite3.Connection, state: RecordState) -> None:
+    """Guarda el estado completo de un registro (a diferencia de `set_record_state`)."""
+    conn.execute(
+        f"INSERT OR REPLACE INTO record_state ({_RECORD_STATE_COLUMNS}) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            state.record_name,
+            state.verification,
+            state.since,
+            state.accepted_ip,
+            state.accepted_at,
+            state.failures,
+            state.failure_ip,
+            state.next_attempt_at,
+            state.last_error_code,
+        ),
+    )
+
+
+def insert_update_attempt(
+    conn: sqlite3.Connection,
+    at: datetime,
+    record_name: str,
+    ip: str,
+    accepted: bool,
+    changed: bool | None,
+    error_code: str | None,
+    retryable: bool | None,
+) -> None:
+    conn.execute(
+        "INSERT INTO dns_update_attempts "
+        "(attempted_at, record_name, ip, accepted, changed, error_code, retryable) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (iso(at), record_name, ip, accepted, changed, error_code, retryable),
     )
 
 
@@ -128,6 +201,7 @@ def purge(
         ("public_ip_observations", "observed_at", samples_limit),
         ("dns_checks", "observed_at", samples_limit),
         ("events", "occurred_at", events_limit),
+        ("dns_update_attempts", "attempted_at", events_limit),
     ):
         # Tabla y columna son constantes de este módulo, nunca entrada externa.
         deleted[table] = conn.execute(f"DELETE FROM {table} WHERE {column} < ?", (limit,)).rowcount
