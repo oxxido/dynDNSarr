@@ -51,7 +51,7 @@ Detalle y alternativas descartadas: [slices/01-bootstrap.md](slices/01-bootstrap
 
 Detalle: [slices/02a-observacion-ip-dns.md](slices/02a-observacion-ip-dns.md) (D1–D7) y [ADR-0003](decisions/0003-motor-ddns-observacion.md).
 
-- Config del motor DDNS: TOML sin secretos (`DYNDNSARR_AGENT_CONFIG_FILE`); las variables de entorno siguen siendo la config del proceso. Los secretos, cuando existan (2b), van por variables de entorno, nunca en el TOML.
+- Config del motor DDNS: TOML sin secretos (`DYNDNSARR_AGENT_CONFIG_FILE`); las variables de entorno siguen siendo la config del proceso. Los secretos van por variables de entorno, nunca en el TOML (2b: credenciales de DonDominio).
 - Capas del Agent: `ddns/` (reglas y orquestación: `config`, `ip_sources`, `cycle`), `dns/` (cliente DNS tras el `Protocol` `DnsObserver`), `db/ddns_repo.py` (SQLite) y `scheduler.py`; la red se observa primero y el ciclo escribe todo en una sola transacción.
 - IP pública: «confirmada» solo con ≥2 fuentes que coinciden y IPv4 global; en otro caso `uncertain` (nunca se concluye por mayoría ni con una fuente).
 - Eventos solo en cambios de estado; `sequence` es `AUTOINCREMENT` (no se reutiliza tras purgar). Instantes en UTC `YYYY-MM-DDTHH:MM:SSZ`.
@@ -59,3 +59,16 @@ Detalle: [slices/02a-observacion-ip-dns.md](slices/02a-observacion-ip-dns.md) (D
 - TLS siempre verificado; `http://` solo a `localhost`/`127.0.0.1` y solo en la configuración de fuentes (para pruebas).
 - CLI: `dyndnsarr-agent` sin argumentos sirve; `status` solo lee, `check-*` guardan muestras sin tocar estado ni eventos.
 - Pruebas: servidores falsos en loopback (`FakeDns`, `FakeIpSource` en `tests/conftest.py`); nada de servicios reales.
+
+## Fijado en slice2b
+
+Detalle: [slices/02b-actualizacion-ddns-managed.md](slices/02b-actualizacion-ddns-managed.md) (D1–D7) y [ADR-0004](decisions/0004-actualizacion-ddns-dondominio.md).
+
+- Capas nuevas: `providers/` (adaptador HTTP tras el `Protocol` `DnsProvider`; `registry.py` lo construye), `ddns/reconcile.py` (`decide`, backoff: reglas puras sin E/S) y `ddns/cycle.py` (orquesta). Un `monitored` pasa por la rama de 2a, que no recibe el proveedor.
+- El ciclo observa la red, llama al proveedor (una vez por registro `managed` y ciclo, 2 s de pausa entre registros) y escribe estado, intentos y eventos en **una** transacción. Un fallo del proveedor es un `UpdateResult`, no una excepción.
+- «Aceptado» no es «correcto»: tras una llamada aceptada el registro queda `pending_verification` hasta que los resolvers externos devuelven la IP; mientras tanto no se vuelve a llamar con esa IP.
+- Backoff 60 s ×2 hasta 3600 s, persistido en `record_state` (`next_attempt_at`). `failures > 0` con `next_attempt_at` nulo es un error definitivo. Un fallo solo vale para la IP con la que ocurrió.
+- Eventos de fallo del proveedor solo al empezar una racha o cambiar el código (§7.7), no por reintento.
+- Credenciales de DonDominio solo por `DYNDNSARR_AGENT_DONDOMINIO_USER`/`_KEY` (`SecretStr`). La clave viaja en la URL (API por GET): `httpx`/`httpcore` en `WARNING` es un control de seguridad (su INFO imprime la URL), los adaptadores devuelven códigos seguros y nunca el texto de una excepción, y hay pruebas con valor canario.
+- `flock` no bloqueante sobre `<data_dir>/ddns.lock` coordina el daemon con `sync-ddns`. `sync-ddns` ignora backoff y bloqueo por error definitivo, no la deduplicación.
+- Pruebas: `FakeDonDominio` en loopback (`tests/conftest.py`) que, al aceptar, cambia lo que responde `FakeDns`; fixtures del adaptador tomados de respuestas reales.

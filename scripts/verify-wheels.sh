@@ -52,6 +52,11 @@ PY
 check agent DYNDNSARR_AGENT
 check hub DYNDNSARR_HUB
 
-# `status` falla si la migración 0002 (tablas del motor DDNS) no viajó dentro del wheel.
+# `status` falla si las migraciones (0002 y 0003: tablas del motor DDNS) no viajaron en el wheel
+# y lee las columnas de la 0003.
 DYNDNSARR_AGENT_DATA_DIR="$work/data-agent" "$work/venv/bin/dyndnsarr-agent" status >/dev/null
 echo "OK: agent instalado desde wheel ejecuta 'dyndnsarr-agent status'"
+
+# El paquete `providers` debe viajar en el wheel (se declara a mano en `packages` del pyproject).
+"$work/venv/bin/python" -c 'import dyndnsarr_agent.providers.dondominio, dyndnsarr_agent.providers.registry'
+echo "OK: agent instalado desde wheel importa dyndnsarr_agent.providers"

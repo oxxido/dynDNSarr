@@ -1,6 +1,6 @@
 # Slice 2b — Actualización DDNS `managed` (DonDominio) (motor DDNS, parte 2)
 
-- **Estado:** planificado
+- **Estado:** en implementación
 - **Fase (arquitectura):** 1, segunda mitad ([architecture.md](../architecture.md) §7 pasos 4–6, §13 casos 1, 2 y 4)
 - **Rama:** `slice/02b-actualizacion-ddns-managed`
 - **PR:** —
