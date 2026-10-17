@@ -1,9 +1,9 @@
 # Slice 2b — Actualización DDNS `managed` (DonDominio) (motor DDNS, parte 2)
 
-- **Estado:** en revisión
+- **Estado:** fusionado
 - **Fase (arquitectura):** 1, segunda mitad ([architecture.md](../architecture.md) §7 pasos 4–6, §13 casos 1, 2 y 4)
 - **Rama:** `slice/02b-actualizacion-ddns-managed`
-- **PR:** [#3](https://github.com/oxxido/dynDNSarr/pull/3) (abierto contra `main`, sin fusionar)
+- **PR:** [#3](https://github.com/oxxido/dynDNSarr/pull/3) (fusionado en `main` el 2026-10-17, commit `a2dcb29`)
 
 ## Objetivo
 
