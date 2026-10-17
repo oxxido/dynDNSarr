@@ -1,9 +1,9 @@
 # Slice 2a — Observación de IP y DNS (motor DDNS, parte 1)
 
-- **Estado:** en implementación
+- **Estado:** fusionado
 - **Fase (arquitectura):** 1, primera mitad ([architecture.md](../architecture.md) §7 pasos 1–3 y 7, §13)
 - **Rama:** `slice/02a-observacion-ip-dns`
-- **PR:** pendiente de abrir (contra `main`): `gh` sin sesión válida (ver Evidencia)
+- **PR:** #2 (fusionado en `main`, commit `8b3d3a0`)
 
 ## Objetivo
 
