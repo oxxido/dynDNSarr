@@ -15,20 +15,34 @@ pytestmark = pytest.mark.e2e
 
 A, B = "1.2.3.4", "5.6.7.8"
 NAME = "home.example.com"
+USER, KEY = "canary-user", "canary-key-0123456789"
 
 
 class Agent:
     """Un Agent real (proceso) con servidores falsos, sin Hub."""
 
-    def __init__(self, tmp_path, source_a, source_b, dns):
+    def __init__(self, tmp_path, source_a, source_b, dns, dondominio=None):
         self.dir = tmp_path
         self.db = tmp_path / "data" / "agent.db"
         self.config = tmp_path / "agent.toml"
+        record = 'mode = "monitored"\n'
+        extra = ""
+        if dondominio is not None:
+            record = 'mode = "managed"\nprovider = "dondominio"\n'
+            extra = (
+                "[update]\nverify_retry_seconds = 1\nverify_timeout_seconds = 30\n"
+                f'[providers.dondominio]\nurl = "{dondominio.url}"\n'
+            )
         self.config.write_text(
             f'[ip_sources]\nurls = ["{source_a.url}", "{source_b.url}"]\n'
             f'[dns]\nresolvers = ["{dns.resolver}"]\n'
-            f'[[records]]\nname = "{NAME}"\nmode = "monitored"\n',
+            f'[[records]]\nname = "{NAME}"\n{record}{extra}',
             encoding="utf-8",
+        )
+        self.credentials = (
+            {"DYNDNSARR_AGENT_DONDOMINIO_USER": USER, "DYNDNSARR_AGENT_DONDOMINIO_KEY": KEY}
+            if dondominio is not None
+            else {}
         )
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0))
@@ -42,6 +56,7 @@ class Agent:
             "DYNDNSARR_AGENT_PORT": str(self.port),
             "DYNDNSARR_AGENT_DATA_DIR": str(self.dir / "data"),
             "DYNDNSARR_AGENT_CONFIG_FILE": str(self.config),
+            **self.credentials,
             **extra,
         }
 
@@ -101,6 +116,19 @@ class Agent:
                 return
             time.sleep(0.05)
         pytest.fail(f"{sql!r}: se esperaba {expected}, hay {rows}")
+
+    def wait_until(self, sql, predicate, timeout=15):
+        deadline = time.monotonic() + timeout
+        rows = None
+        while time.monotonic() < deadline:
+            try:
+                rows = self.query(sql)
+            except sqlite3.OperationalError:
+                rows = None
+            if rows is not None and predicate(rows):
+                return rows
+            time.sleep(0.05)
+        pytest.fail(f"{sql!r}: no se cumplió la condición, hay {rows}")
 
     def events(self):
         return [r[0] for r in self.query("SELECT type FROM events ORDER BY sequence")]
@@ -221,3 +249,180 @@ def test_missing_config_file_aborts_startup(world):
         timeout=30,
     )
     assert result.returncode != 0 and "no existe" in result.stderr
+
+
+# --- slice 2b: registros managed contra un DonDominio falso, sin Hub ---
+
+
+@pytest.fixture
+def managed(tmp_path, make_fake_ip_source, fake_dns, fake_dondominio):
+    source_a, source_b = make_fake_ip_source(A), make_fake_ip_source(A)
+    fake_dns.answers[NAME] = [A]
+    agent = Agent(tmp_path, source_a, source_b, fake_dns, fake_dondominio)
+    return agent, source_a, source_b, fake_dns, fake_dondominio
+
+
+def set_ip(sources, ip):
+    for source in sources:
+        source.ip = ip
+
+
+def count(agent, sql):
+    return agent.query(sql)[0][0]
+
+
+def test_ip_change_is_one_update_then_pending_then_verified(managed):
+    agent, source_a, source_b, dns, dondominio = managed
+    agent.run_once(1)
+    assert dondominio.calls == []  # el DNS ya era correcto: ninguna llamada
+    assert agent.events() == ["agent_started", "ip_changed", "dns_verified"]
+
+    set_ip((source_a, source_b), B)  # la IP cambia y el DNS tarda en propagarse
+    dondominio.propagate = False
+    agent.start()
+    agent.wait_for("SELECT verification FROM record_state", [("pending_verification",)])
+    checks = count(agent, "SELECT count(*) FROM dns_checks")
+    agent.wait_until("SELECT count(*) FROM dns_checks", lambda rows: rows[0][0] >= checks + 3)
+    assert len(dondominio.calls) == 1  # varios ciclos pendientes, una sola llamada
+    assert agent.query("SELECT verification FROM record_state") == [("pending_verification",)]
+
+    dns.answers[NAME] = [B]  # el DNS converge
+    agent.wait_for("SELECT verification FROM record_state", [("verified",)])
+    agent.stop()
+    assert len(dondominio.calls) == 1
+    call = dondominio.calls[0]
+    assert (call["host"], call["ip"], call["lang"]) == (NAME, B, "en")
+    assert agent.events()[3:] == [
+        "agent_started",
+        "ip_changed",
+        "dns_update_succeeded",
+        "dns_verified",
+    ]
+    assert agent.query("SELECT accepted_ip, failures FROM record_state") == [(None, 0)]
+
+
+def test_no_ip_change_means_no_calls_and_no_new_events(managed):
+    agent, *_, dondominio = managed
+    agent.run_once(1)
+    first = agent.events()
+    agent.run_once(2)
+    assert dondominio.calls == []
+    assert agent.events() == first + ["agent_started"]
+
+
+def test_provider_down_fails_once_keeps_the_backoff_over_a_restart_and_sync_recovers(managed):
+    agent, source_a, source_b, dns, dondominio = managed
+    agent.run_once(1)
+    set_ip((source_a, source_b), B)
+    dondominio.mode = "down"
+    agent.start()
+    agent.wait_for("SELECT count(*) FROM dns_update_attempts", [(1,)])
+    agent.wait_for("SELECT verification, failures FROM record_state", [("mismatch", 1)])
+    agent.stop()
+    assert agent.events().count("dns_update_failed") == 1
+    wait = agent.query("SELECT next_attempt_at FROM record_state")[0][0]
+    assert wait is not None
+
+    agent.run_once(3)  # reinicio: la espera pendiente se respeta
+    assert len(dondominio.calls) == 1
+    assert agent.events().count("dns_update_failed") == 1
+
+    dondominio.mode = "ok"
+    sync = agent.command("sync-ddns")  # con el daemon parado
+    assert sync.returncode == 0, sync.stderr
+    assert "pending_verification" in sync.stdout
+    assert len(dondominio.calls) == 2
+    agent.start()
+    agent.wait_for("SELECT verification FROM record_state", [("verified",)])
+    agent.stop()
+    assert agent.events().count("dns_update_succeeded") == 1
+
+
+def test_definitive_error_is_not_retried_until_sync_ddns(managed):
+    agent, source_a, source_b, dns, dondominio = managed
+    agent.run_once(1)
+    set_ip((source_a, source_b), B)
+    dondominio.mode = "auth"
+    agent.start()
+    agent.wait_for("SELECT count(*) FROM dns_update_attempts", [(1,)])
+    agent.stop()
+    assert agent.query("SELECT failures, next_attempt_at, last_error_code FROM record_state") == [
+        (1, None, "auth_failed")
+    ]
+    agent.run_once(3)
+    assert len(dondominio.calls) == 1
+    failing = agent.command("sync-ddns")
+    assert failing.returncode == 1 and "auth_failed (definitivo)" in failing.stdout
+    assert len(dondominio.calls) == 2
+    dondominio.mode = "ok"
+    assert agent.command("sync-ddns").returncode == 0
+    assert len(dondominio.calls) == 3
+
+
+def test_sync_ddns_does_not_overlap_with_a_running_cycle(managed):
+    import fcntl
+
+    agent, source_a, source_b, _, dondominio = managed
+    agent.run_once(1)
+    set_ip((source_a, source_b), B)
+    with open(agent.dir / "data" / "ddns.lock", "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result = agent.command("sync-ddns")
+    assert result.returncode == 1 and "en curso" in result.stderr
+    assert dondominio.calls == []
+
+
+def test_status_shows_the_update_state(managed):
+    agent, source_a, source_b, _, dondominio = managed
+    agent.run_once(1)
+    set_ip((source_a, source_b), B)
+    dondominio.mode = "down"
+    agent.start()
+    agent.wait_for("SELECT count(*) FROM dns_update_attempts", [(1,)])
+    agent.stop()
+    status = agent.command("status")
+    assert status.returncode == 0
+    assert f"{NAME}  mismatch" in status.stdout
+    assert "reintento a partir de" in status.stdout and "http_error" in status.stdout
+
+
+def test_the_key_does_not_leak_anywhere(managed):
+    agent, source_a, source_b, dns, dondominio = managed
+    outputs = [agent.run_once(1)]
+    set_ip((source_a, source_b), B)
+    dondominio.mode = "down"
+    agent.start()
+    agent.wait_for("SELECT count(*) FROM dns_update_attempts", [(1,)])
+    outputs.append(agent.stop())
+    dondominio.mode = "ok"
+    for args in (("sync-ddns",), ("status",), ("check-dns",)):
+        result = agent.command(*args)
+        outputs += [result.stdout, result.stderr]
+    agent.start()
+    agent.wait_for("SELECT verification FROM record_state", [("verified",)])
+    outputs.append(agent.stop())
+    assert dondominio.calls and dondominio.calls[0]["password"] == KEY  # la clave sí se envía
+    for text in outputs:
+        assert KEY not in text and USER not in text
+    conn = sqlite3.connect(agent.db)
+    dump = "\n".join(conn.iterdump())
+    conn.close()
+    assert KEY not in dump and USER not in dump
+    assert "/json/?" not in dump
+
+
+def test_managed_record_without_credentials_aborts_startup(managed):
+    agent, *_ = managed
+    result = subprocess.run(
+        [sys.executable, "-m", "dyndnsarr_agent"],
+        env={
+            **agent.env(),
+            "DYNDNSARR_AGENT_DONDOMINIO_USER": "",
+            "DYNDNSARR_AGENT_DONDOMINIO_KEY": "",
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode not in (0, None)
+    assert "DYNDNSARR_AGENT_DONDOMINIO_KEY" in result.stderr
