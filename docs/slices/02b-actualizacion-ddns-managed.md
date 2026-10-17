@@ -171,4 +171,27 @@ Commits pequeños, tests antes del código. Cada paso termina con `ruff` y `pyte
 
 ## Evidencia
 
-Se rellena al implementar.
+Rama `slice/02b-actualizacion-ddns-managed`. Verificado el 2026-10-17 con Python 3.11.17 y 3.12.3 en venvs limpios:
+
+| Criterio | Resultado |
+|---|---|
+| 1. venv limpio 3.11 y 3.12: `ruff check`, `ruff format --check`, `pytest` | Verificado con 3.11.17 y 3.12.3: 342 tests (incluidos 18 e2e), 0 fallos en ambos. |
+| 2. E2E: DNS = A, fuentes a B → una llamada con `ip=B`, `pending_verification` → `verified`, un evento de cada | Verificado: `tests/e2e/test_ddns_engine.py::test_ip_change_is_one_update_then_pending_then_verified` (Agent real, `FakeIpSource`, `FakeDns` y `FakeDonDominio` en loopback). El cambio de IP se observa al relanzar el Agent (intervalo mínimo 60 s); los ciclos periódicos, en `tests/integration/test_scheduler.py`. |
+| 3. Sin cambio no hay llamadas ni eventos; con propagación pendiente varios ciclos, una llamada | Verificado: e2e `test_no_ip_change_means_no_calls_and_no_new_events` y el e2e anterior (≥3 ciclos pendientes, `len(calls) == 1`); `tests/integration/test_cycle_managed.py`. |
+| 4. Proveedor caído → `dns_update_failed` una vez, backoff 60→120→… (tope 3600) sin llamadas intermedias, recuperación; la espera sobrevive al reinicio | Verificado en `test_cycle_managed.py` (`test_provider_failure_backs_off_…`, `test_backoff_never_exceeds_an_hour`, `test_the_backoff_survives_a_restart`) con reloj inyectado. En e2e (`test_provider_down_fails_once_…`) se comprueba el primer fallo, la espera tras reiniciar el proceso y la recuperación con `sync-ddns`; las esperas de 60 s en adelante no se esperan en tiempo real. |
+| 5. Error definitivo → sin reintentos automáticos; `sync-ddns` sí reintenta | Verificado: e2e `test_definitive_error_is_not_retried_until_sync_ddns`, `test_cycle_managed.py::test_definitive_error_stops_automatic_retries_until_the_ip_changes` y fixtures reales en `tests/unit/test_dondominio.py`. |
+| 6. `monitored` nunca invoca al proveedor; sin credenciales un `managed` aborta, el motor `monitored`-only arranca igual | Verificado: `test_monitored_records_never_reach_the_provider` (proveedor que falla si se llama), `test_main_aborts_on_managed_record_without_credentials`, e2e `test_managed_record_without_credentials_aborts_startup`; los e2e `monitored` del slice 2a siguen en verde sin credenciales. |
+| 7. Ni la clave ni la URL con la clave en logs, eventos, BD ni salida del CLI | Verificado con valor canario: `tests/unit/test_dondominio.py` (con el `setup_logging` real), `tests/integration/test_cli.py::test_the_key_never_shows_…` y e2e `test_the_key_does_not_leak_anywhere` (stderr del daemon, salida del CLI y volcado completo de la BD). Una prueba documenta que sin `setup_logging` el INFO de `httpx` sí imprimiría la clave. |
+| 8. `sync-ddns` con el daemon parado y sin coincidir con un ciclo (`flock`); `status` no escribe | Verificado: e2e `test_sync_ddns_does_not_overlap_with_a_running_cycle` y `test_provider_down_…` (daemon parado), `test_cli.py::test_sync_ddns_with_the_lock_taken_…`, `test_status_still_does_not_write_with_managed_records`; `test_scheduler.py` (ciclo saltado con el bloqueo tomado, bloqueo liberado al cancelar). |
+| 9. Wheels en venv limpio ejecutan `status` (migración 0003 y `providers` viajan) | Verificado con 3.11 y 3.12 (`scripts/verify-wheels.sh`, que ahora importa `dyndnsarr_agent.providers`). |
+| 10. CI de GitHub en el PR | Ver «Entrega» más abajo. |
+| 11. Manual del usuario: subdominio de prueba real, `pending_verification` → `verified`, `dig` desde fuera | **Pendiente del usuario** (docs/operations.md §5, «Comprobación manual»). Anota el tiempo de propagación observado para ajustar `verify_timeout_seconds`. |
+
+Desviaciones respecto al diseño del plan (menores):
+
+- `decide(public_ip, answers, state, now, verify_timeout_seconds, manual)`: se quitó `record` (el estado ya lleva el nombre) y se añadió el plazo, que la firma del plan no pasaba. Devuelve `Decision(call, state, verification_timed_out_after)`; `after_update` y `starts_failure_streak` completan el resultado de la llamada.
+- Un error definitivo se codifica con `failures > 0` y `next_attempt_at` nulo, sin columna extra (el esquema de D5 no cambia). Una espera o un bloqueo solo valen para la IP con la que ocurrió el fallo (`failure_ip`): una IP nueva se actualiza sin esperar.
+- `CycleResult` añade `updates` (resultado de cada llamada) y `next_wake_seconds`; `providers/registry.py` construye los proveedores y `Settings.lock_path` da la ruta de `ddns.lock`.
+- Un vencimiento de reintento ya pasado no despierta al scheduler (evita ciclos en bucle si no hay nada que reintentar, p. ej. con IP incierta).
+- `sync-ddns` filtra la configuración a los registros `managed` habilitados (los `monitored` no se observan en ese pase).
+- Nada de esto se probó contra el DonDominio real en la suite: los fixtures son los del sondeo del 2026-10-15. La receta con `runuser` de operaciones no se probó en la Raspberry.
