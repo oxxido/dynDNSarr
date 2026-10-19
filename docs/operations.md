@@ -1,6 +1,6 @@
 # Operación
 
-Guía de arranque y despliegue (slices 1 a 3a). Variables de configuración: [.env.example](../.env.example).
+Guía de arranque y despliegue (slices 1 a 3b). Variables de configuración: [.env.example](../.env.example).
 
 Ambos componentes escuchan por defecto en `127.0.0.1`. Cámbialo solo con un firewall que limite el origen: el Agent no debe ser accesible desde Internet ni por equipos distintos al Hub.
 
@@ -72,7 +72,7 @@ docker compose ps                   # el estado pasa a "healthy"
 
 Los dos componentes son una SQLite en modo WAL. Las copias contienen datos de configuración: protégelas (`0600`) y no las subas al repositorio.
 
-- **Agent:** con el servicio parado (`sudo systemctl stop dyndnsarr-agent`), copiar `/var/lib/dyndnsarr/agent.db*` (incluye `-wal` y `-shm` si existen) y `/etc/dyndnsarr/agent.toml`. **Antes de actualizar al slice 3a**: la migración 0004 añade columnas a `events` (los eventos ya guardados quedan pendientes de entrega) y no hay vuelta atrás automática. Restaurar: servicio parado, copiar los archivos de vuelta con dueño `dyndnsarr` y modo `0600`, arrancar.
+- **Agent:** con el servicio parado (`sudo systemctl stop dyndnsarr-agent`), copiar `/var/lib/dyndnsarr/agent.db*` (incluye `-wal` y `-shm` si existen) y `/etc/dyndnsarr/agent.toml`. **Antes de actualizar al slice 3a**: la migración 0004 añade columnas a `events` (los eventos ya guardados quedan pendientes de entrega) y no hay vuelta atrás automática. **Antes de actualizar al slice 3b**: la migración 0005 solo crea tablas nuevas (`configuration_versions`, `commands`), también sin vuelta atrás automática. Restaurar: servicio parado, copiar los archivos de vuelta con dueño `dyndnsarr` y modo `0600`, arrancar.
 - **Hub (`/data`)**, con el servicio parado:
   ```bash
   docker compose stop hub
@@ -252,3 +252,128 @@ Un evento que el Hub rechaza por inválido (`invalid_event`, `payload_too_large`
 1. `agent-add`, configurar el Agent con `ca_file` y reiniciarlo: `dyndnsarr-hub events` debe mostrar `agent_started`.
 2. Parar el Hub, forzar eventos (reiniciar el Agent, o `sync-ddns` con un cambio de IP), comprobar con `status` que quedan pendientes, arrancar el Hub y esperar hasta unos 15 minutos (o reiniciar el Agent): `events` los muestra **una sola vez**.
 3. Quitar `ca_file` (o usar otra CA): `status` debe mostrar `tls_error` y los eventos seguir pendientes.
+
+## 7. Control Hub → Agent (slice 3b)
+
+Desde la consola del Hub (todavía no hay UI) se puede consultar al Agent, enviarle una **configuración versionada** y pedirle **comandos** (`check_dns`, `sync_ddns`). El Agent vive en la Raspberry sin proxy delante: sirve **HTTPS él mismo** con un certificado de una CA local, y el Hub verifica siempre que lo firma esa CA (no hay forma de desactivarlo). El Agent sigue funcionando sin el Hub: DDNS, configuración activa, `config-reset` y la API no dependen de él, y los resultados se entregan al volver (§6).
+
+La API (`/internal/v1`) solo existe si el Agent tiene `DYNDNSARR_AGENT_API_TOKEN` (y `DYNDNSARR_AGENT_CONFIG_FILE`: la configuración remota se superpone sobre el TOML). Con token y escucha fuera de loopback, el Agent **no arranca sin TLS**.
+
+### 7.1 CA local y certificado del Agent
+
+En un equipo de confianza (no hace falta que sea la Raspberry), una sola vez. **La clave de la CA (`agent-ca.key`) no sale de ahí**: ni a la Raspberry ni al Hub.
+
+```bash
+# CA local (5 años)
+openssl genrsa -out agent-ca.key 4096
+openssl req -x509 -new -key agent-ca.key -sha256 -days 1825 \
+    -subj "/CN=DynDNSarr Agent CA" -out agent-ca.pem
+
+# Certificado del Agent (1 año). La IP o el nombre con los que el Hub llamará al Agent deben
+# estar en subjectAltName: si no, el Hub rechaza el certificado.
+openssl genrsa -out agent.key 2048
+openssl req -new -key agent.key -subj "/CN=raspberry-home" -out agent.csr
+cat > agent.ext <<'EOF'
+subjectAltName = IP:192.168.1.50, DNS:raspberry.lan
+extendedKeyUsage = serverAuth
+keyUsage = digitalSignature, keyEncipherment
+basicConstraints = CA:FALSE
+EOF
+openssl x509 -req -in agent.csr -CA agent-ca.pem -CAkey agent-ca.key -CAcreateserial \
+    -days 365 -sha256 -extfile agent.ext -out agent.pem
+openssl verify -CAfile agent-ca.pem agent.pem      # agent.pem: OK
+```
+
+En la Raspberry:
+
+```bash
+sudo install -m 0644 -o root -g dyndnsarr agent.pem /etc/dyndnsarr/agent.pem
+sudo install -m 0640 -o root -g dyndnsarr agent.key /etc/dyndnsarr/agent.key
+```
+
+En el Hub, la CA **pública** (`agent-ca.pem`) va al volumen `/data`, que es donde `compose.yaml` la busca (`DYNDNSARR_HUB_AGENT_CA_FILE=/data/agent-ca.pem`):
+
+```bash
+docker compose cp agent-ca.pem hub:/data/agent-ca.pem
+```
+
+**Renovación:** el certificado caduca al año y no hay aviso. Un certificado caducado corta solo el enlace (el Hub ve `tls_error`), no el DDNS. Repite desde `openssl genrsa -out agent.key` hasta `openssl x509 -req` con la misma CA, copia `agent.pem` y `agent.key` y reinicia el Agent. Anota la fecha en tu calendario.
+
+### 7.2 Token de la API y alta en el Hub
+
+```bash
+docker compose exec hub dyndnsarr-hub agent-set-api raspberry-home https://192.168.1.50:8001
+docker compose exec hub dyndnsarr-hub agent-api-token raspberry-home    # se muestra una sola vez
+```
+
+La URL debe ser `https://` y coincidir con un nombre del certificado (§7.1). En `/etc/dyndnsarr/agent.env` (0600):
+
+```
+DYNDNSARR_AGENT_HOST=192.168.1.50
+DYNDNSARR_AGENT_API_TOKEN=ddh_…
+DYNDNSARR_AGENT_TLS_CERT_FILE=/etc/dyndnsarr/agent.pem
+DYNDNSARR_AGENT_TLS_KEY_FILE=/etc/dyndnsarr/agent.key
+```
+
+Reinicia el Agent y comprueba: `docker compose exec hub dyndnsarr-hub agent-status raspberry-home`. Restringe con el firewall el origen del puerto 8001 al servidor del Hub.
+
+- Este token es **distinto** del que usa el Agent ante el Hub (§6). Aquí el Hub debe presentarlo, así que lo guarda **en claro** en `hub.db` (`/data`, 0600) y no en `.env` (un `.env` de Dockge es visible en su UI y en `docker inspect`). Quien lea `hub.db` o su copia de seguridad puede llamar a la API de ese Agent desde la LAN —solo a esa API limitada, nunca a DonDominio—: protege `/data` y sus backups.
+- **Rotación:** `agent-api-token` genera y guarda uno nuevo; hasta actualizar `agent.env` y reiniciar el Agent, el Hub recibe 401 (el DDNS y la entrega de eventos no se ven afectados).
+- Con TLS activo, `/healthz` del Agent también es HTTPS: `curl --cacert agent-ca.pem https://192.168.1.50:8001/healthz`.
+- **Reloj:** los comandos llevan `expires_at` y se compara el reloj del Hub con el del Agent. Sin NTP en alguno de los dos, un comando puede nacer caducado.
+
+### 7.3 Configuración remota
+
+El Hub puede administrar solo estas secciones: `check_interval_seconds`, `ip_sources`, `dns`, `retention`, `update` y `records`. Son **locales** y el Agent las rechaza (`forbidden_section`): `providers` (la clave de DonDominio viaja en la petición, así que el Hub no puede redirigirla), `hub`, y cualquier secreto, TLS o token. Las credenciales siguen en `agent.env`: un registro `managed` nuevo sin ellas se rechaza (`missing_credentials`).
+
+```bash
+# cambio.toml con solo las secciones administrables (mismo formato que agent.toml):
+docker compose cp cambio.toml hub:/tmp/cambio.toml
+docker compose exec hub dyndnsarr-hub config-push raspberry-home /tmp/cambio.toml
+```
+
+Una sección enviada **sustituye entera** a la del TOML (envía, p. ej., todos los `[[records]]` que quieras, no solo el nuevo); las secciones que no envías siguen viniendo del TOML. El Hub crea la versión siguiente (1, 2, 3…), calcula su hash y la envía; el Agent la valida entera y, solo si todo vale, la guarda y la aplica **en el siguiente ciclo** (el ciclo en curso no cambia de configuración).
+
+| Resultado | Significa |
+|---|---|
+| aplicada | Guardada y activa. Visible en `agent-status` y en `dyndnsarr-agent status` (`Configuración: versión N`). |
+| `invalid_config` | No valida; el mensaje indica `ruta: motivo`. El Agent conserva la versión y el comportamiento anteriores. |
+| `forbidden_section` | Incluye una sección local o desconocida. |
+| `missing_credentials` | Un registro `managed` habilitado sin credenciales de DonDominio en `agent.env`. |
+| `hash_mismatch` | El hash no corresponde al contenido. |
+| `stale_version` / `version_conflict` | Versión menor que la activa / misma versión con otro contenido. |
+
+| Comando del Hub | Qué hace |
+|---|---|
+| `config-push <agent_id> FILE.toml` | Crea la versión siguiente y la envía. |
+| `config-resend <agent_id>` | Reenvía la última versión creada (idempotente: la misma versión y hash responde «aplicada» sin cambios). |
+| `config-show <agent_id>` | Versión deseada, aplicada, último intento y contenido. Nunca muestra tokens. |
+| `agent-status <agent_id>` | Consulta `health` y `status` al Agent: configuración activa, IP, registros y enlace. Lleva la IP completa: es la vista privada. |
+| `agent-set-api <agent_id> <url>` / `agent-api-token <agent_id>` | Dirección y token de la API del Agent (§7.2). |
+
+**Con el Agent caído** al enviar, la versión queda **pendiente** (`config-show` lo indica); `config-resend` la reenvía cuando vuelva. No hay reconciliación automática hasta el slice 5. El Hub se entera del resultado por la respuesta y, además, por los eventos `config_applied`/`config_rejected` (el outbox entrega cada 30 s).
+
+**Qué manda, el TOML o el Hub:** la versión activa sustituye a las secciones del TOML (el Agent registra una advertencia `config_overrides_toml` si difieren). Si la versión guardada deja de validar al arrancar (por ejemplo, cambias el TOML o quitas credenciales), el Agent **no arranca** y el mensaje apunta a `config-reset`.
+
+**Volver al TOML** (también con el Hub caído): `dyndnsarr-agent config-reset` borra las versiones remotas y emite `config_reset`; **reinicia el Agent** para que use el TOML (el proceso en marcha conserva su configuración en memoria hasta entonces). El Hub ve la versión 0 y puede reenviar con `config-resend`.
+
+### 7.4 Comandos
+
+```bash
+docker compose exec hub dyndnsarr-hub command raspberry-home check_dns
+docker compose exec hub dyndnsarr-hub command raspberry-home sync_ddns --ttl 120
+docker compose exec hub dyndnsarr-hub command-show --refresh <command_id>
+```
+
+- `check_dns`: como `dyndnsarr-agent check-dns` (guarda muestras; devuelve el veredicto por registro). `sync_ddns`: un pase como `sync-ddns`, con el mismo `ddns.lock`: si un ciclo lo tiene tomado, termina `failed` con `code: busy` y el Hub debe pedir otro comando. Cualquier otro tipo (p. ej. `wake_device`, que llega en el slice 6) se rechaza como `unsupported_command`.
+- El comando se persiste en el Agent **antes** de ejecutarse y se ejecuta en serie. Un `command_id` repetido devuelve el mismo estado y resultado sin reejecutar. `--ttl` (300 s por defecto) fija `expires_at`: un comando caducado no se ejecuta.
+- Estados en el Hub: `pending` (aún no aceptado por el Agent), `sent`, `succeeded`, `failed`, `expired`. Si el Agent estaba caído, el comando queda `pending` y **no se reenvía solo**: `command-show --refresh` pregunta al Agent; si no lo conoce, pide uno nuevo.
+- Si el Agent se reinicia a mitad de un comando, queda `failed` con `code: interrupted` y **nunca se reejecuta solo** (principio de WoL, arquitectura §5).
+- El resultado vuelve como evento `command_completed` (sin IP ni credenciales), también con el Hub caído al enviarlo.
+
+### 7.5 Comprobación manual
+
+1. §7.1 y §7.2 en la Raspberry y el servidor del Hub; `agent-status raspberry-home` debe mostrar `estado ok`.
+2. `config-push` de un cambio real (por ejemplo `check_interval_seconds = 120`): «aplicada»; `dyndnsarr-agent status` muestra `Configuración: versión 1`. Repite con un valor inválido (`check_interval_seconds = 5`): «rechazada (`invalid_config`)» y el Agent sigue en la versión 1.
+3. `command raspberry-home check_dns` y `sync_ddns`: llegan a `succeeded` con `command-show --refresh`.
+4. `dyndnsarr-agent config-reset` + reinicio: `Configuración: TOML local`; en el Hub, `config-show` indica que manda el TOML y `config-resend` lo vuelve a aplicar.

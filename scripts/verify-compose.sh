@@ -26,6 +26,10 @@ second="$(boot_count)"
 # La consola del Hub corre dentro del contenedor (usuario no root, /data): alta y listado.
 "${compose[@]}" exec -T hub dyndnsarr-hub agent-add verify-agent | grep -q '^dda_'
 "${compose[@]}" exec -T hub dyndnsarr-hub agent-list | grep -q '^verify-agent '
+# Control del Agent (slice 3b): migración 0003 y dependencia httpx dentro de la imagen.
+"${compose[@]}" exec -T hub dyndnsarr-hub agent-set-api verify-agent https://agent.example.lan:8001 >/dev/null
+"${compose[@]}" exec -T hub dyndnsarr-hub agent-api-token verify-agent | grep -q '^ddh_'
+"${compose[@]}" exec -T hub dyndnsarr-hub agent-list | grep -q 'api: https://agent.example.lan:8001'
 
 if [ "$second" -ne $((first + 1)) ]; then
     echo "FALLO: boot_count $first -> $second (se esperaba +1)" >&2
