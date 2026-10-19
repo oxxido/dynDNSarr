@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from dyndnsarr_hub import __version__
 from dyndnsarr_hub.api.events import router as events_router
 from dyndnsarr_hub.api.health import router as health_router
+from dyndnsarr_hub.api.public import router as public_router
 from dyndnsarr_hub.config import Settings
 from dyndnsarr_hub.db import MIGRATIONS
 from dyndnsarr_hub.db.state import record_boot
@@ -63,4 +64,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.state.agent_transport = None
     app.include_router(health_router)
     app.include_router(events_router)
+    if settings.public_enabled:
+        # Desactivada, las rutas públicas no existen: el 404 es el de cualquier ruta ausente.
+        app.include_router(public_router)
     return app
