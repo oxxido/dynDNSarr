@@ -1,7 +1,5 @@
 import logging
-import ssl
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Protocol
 
 import httpx
@@ -9,6 +7,7 @@ from pydantic import SecretStr, ValidationError
 
 from dyndnsarr_agent.db.ddns_repo import Event
 from dyndnsarr_shared.events import AgentEvent, EventBatch, EventBatchResult
+from dyndnsarr_shared.tls import has_tls_error
 
 logger = logging.getLogger(__name__)
 
@@ -29,22 +28,6 @@ class DeliveryResult:
 
 class HubClient(Protocol):
     async def send(self, events: list[Event]) -> DeliveryResult: ...
-
-
-def build_ssl_context(ca_file: Path | None) -> ssl.SSLContext:
-    """Contexto con verificación completa: solo la CA indicada, o el almacén del sistema.
-
-    No hay forma de desactivar la verificación.
-    """
-    return ssl.create_default_context(cafile=str(ca_file) if ca_file else None)
-
-
-def _has_tls_error(exc: BaseException | None) -> bool:
-    while exc is not None:
-        if isinstance(exc, ssl.SSLError):
-            return True
-        exc = exc.__cause__ or exc.__context__
-    return False
 
 
 def _status_code(status: int) -> str:
@@ -96,9 +79,7 @@ class HttpHubClient:
         except httpx.TimeoutException:
             return DeliveryResult(error_code="timeout")
         except httpx.TransportError as exc:
-            return DeliveryResult(
-                error_code="tls_error" if _has_tls_error(exc) else "connect_error"
-            )
+            return DeliveryResult(error_code="tls_error" if has_tls_error(exc) else "connect_error")
         if response.status_code != 200:
             return DeliveryResult(error_code=_status_code(response.status_code))
         try:

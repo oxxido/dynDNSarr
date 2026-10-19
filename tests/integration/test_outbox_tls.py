@@ -10,8 +10,9 @@ from pydantic import SecretStr
 from dyndnsarr_agent.db import MIGRATIONS, ddns_repo
 from dyndnsarr_agent.logging_setup import setup_logging
 from dyndnsarr_agent.outbox import loop
-from dyndnsarr_agent.outbox.client import HttpHubClient, build_ssl_context
+from dyndnsarr_agent.outbox.client import HttpHubClient
 from dyndnsarr_shared.db import connect, migrate
+from dyndnsarr_shared.tls import build_ssl_context
 
 NOW = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
 

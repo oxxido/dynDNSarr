@@ -18,11 +18,12 @@ from dyndnsarr_agent.ddns.config import (
     require_provider_credentials,
 )
 from dyndnsarr_agent.dns.resolver import DnsObserver, DnspythonObserver
-from dyndnsarr_agent.outbox.client import HttpHubClient, build_ssl_context
+from dyndnsarr_agent.outbox.client import HttpHubClient
 from dyndnsarr_agent.outbox.loop import run_forever as outbox_run_forever
 from dyndnsarr_agent.providers.registry import build_providers
 from dyndnsarr_agent.scheduler import run_forever, utc_now
 from dyndnsarr_shared.db import connect, migrate
+from dyndnsarr_shared.tls import build_ssl_context
 
 logger = logging.getLogger(__name__)
 
