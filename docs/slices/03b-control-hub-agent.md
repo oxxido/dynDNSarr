@@ -1,6 +1,6 @@
 # Slice 3b — Control Hub → Agent: estado, configuración versionada y comandos
 
-- **Estado:** en revisión
+- **Estado:** fusionado (PR #5, 2026-10-19, `a05fa44`)
 - **Fase (arquitectura):** 2, segunda mitad ([architecture.md](../architecture.md) §3, §5 «Hub → Agent», «Comandos» y «Configuración», §6, §11, §13 casos 9 y comando duplicado)
 - **Rama:** `slice/03b-control-hub-agent`
 - **PR:** [#5](https://github.com/oxxido/dynDNSarr/pull/5)
