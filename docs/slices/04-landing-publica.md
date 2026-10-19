@@ -1,6 +1,6 @@
 # Slice 4 — Landing pública real
 
-- **Estado:** planificado
+- **Estado:** en implementación
 - **Fase (arquitectura):** 3 ([architecture.md](../architecture.md) §8, §9 «UI pública», §13 casos 12, 13 y 15; §14 A5 y A7)
 - **Rama:** `slice/04-landing-publica`
 - **PR:** —
