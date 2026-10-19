@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     port: int = Field(8000, ge=1, le=65535)
     data_dir: Path = Path("/data")
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    # CA que firma el certificado de los Agents (solo esa CA; sin ella, el almacén del sistema).
+    agent_ca_file: Path | None = None
 
     @property
     def db_path(self) -> Path:
