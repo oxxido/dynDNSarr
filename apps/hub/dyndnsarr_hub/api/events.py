@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from dyndnsarr_hub.auth.tokens import hash_token
 from dyndnsarr_hub.clock import iso, utc_now
 from dyndnsarr_hub.db import agents_repo, events_repo
+from dyndnsarr_hub.services import events_handlers
 from dyndnsarr_shared.db import transaction
 from dyndnsarr_shared.events import (
     AgentEvent,
@@ -116,7 +117,8 @@ async def post_events(agent_id: str, request: Request):
     now = utc_now()
     # El commit va antes de responder: el ACK solo se envía con los eventos ya guardados.
     with transaction(db):
-        events_repo.insert_events(db, accepted, now)
+        new = events_repo.insert_events(db, accepted, now)
+        events_handlers.handle_new_events(db, new, now)
         agents_repo.touch_last_seen(db, agent_id, now)
     logger.info(
         "events_received",
