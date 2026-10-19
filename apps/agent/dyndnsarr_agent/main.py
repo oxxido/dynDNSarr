@@ -18,6 +18,8 @@ from dyndnsarr_agent.ddns.config import (
     require_provider_credentials,
 )
 from dyndnsarr_agent.dns.resolver import DnsObserver, DnspythonObserver
+from dyndnsarr_agent.outbox.client import HttpHubClient, build_ssl_context
+from dyndnsarr_agent.outbox.loop import run_forever as outbox_run_forever
 from dyndnsarr_agent.providers.registry import build_providers
 from dyndnsarr_agent.scheduler import run_forever, utc_now
 from dyndnsarr_shared.db import connect, migrate
@@ -58,25 +60,45 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             {"version": __version__, "boot_count": boot_count},
         )
         observer = app.state.ddns_observer or DnspythonObserver(ddns_config.dns.resolvers)
-        # TLS verificado (valor por defecto de httpx); `transport` solo se inyecta en pruebas.
-        async with httpx.AsyncClient(transport=app.state.ddns_transport) as client:
-            task = asyncio.create_task(
-                run_forever(
-                    conn,
-                    ddns_config,
-                    client,
-                    observer,
-                    providers=build_providers(ddns_config, settings, client),
-                    lock_path=settings.lock_path,
-                )
+        async with contextlib.AsyncExitStack() as stack:
+            # TLS verificado (valor por defecto de httpx); `transport` solo se inyecta en pruebas.
+            client = await stack.enter_async_context(
+                httpx.AsyncClient(transport=app.state.ddns_transport)
             )
-            app.state.ddns_task = task
+            tasks = [
+                asyncio.create_task(
+                    run_forever(
+                        conn,
+                        ddns_config,
+                        client,
+                        observer,
+                        providers=build_providers(ddns_config, settings, client),
+                        lock_path=settings.lock_path,
+                    )
+                )
+            ]
+            app.state.ddns_task = tasks[0]
+            hub = ddns_config.hub
+            if hub is not None:
+                # Cliente y conexión propios: la entrega no comparte nada con el ciclo DDNS.
+                hub_http = await stack.enter_async_context(
+                    httpx.AsyncClient(
+                        verify=build_ssl_context(hub.ca_file), transport=app.state.hub_transport
+                    )
+                )
+                outbox_conn = connect(settings.db_path)
+                stack.callback(outbox_conn.close)
+                hub_client = HttpHubClient(hub_http, hub.url, hub.agent_id, settings.hub_token)
+                tasks.append(asyncio.create_task(outbox_run_forever(outbox_conn, hub_client)))
+                app.state.outbox_task = tasks[-1]
             try:
                 yield
             finally:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+                for task in tasks:
+                    task.cancel()
+                for task in tasks:
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
     finally:
         conn.close()
 
@@ -85,6 +107,7 @@ def create_app(
     settings: Settings,
     observer: DnsObserver | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
+    hub_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     """Crea la app. Con `config_file` carga y valida el TOML y las credenciales que exija.
 
@@ -100,5 +123,7 @@ def create_app(
     app.state.ddns_observer = observer
     app.state.ddns_transport = transport
     app.state.ddns_task = None
+    app.state.hub_transport = hub_transport
+    app.state.outbox_task = None
     app.include_router(health_router)
     return app
