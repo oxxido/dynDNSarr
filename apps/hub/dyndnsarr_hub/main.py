@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -10,6 +12,7 @@ from dyndnsarr_hub.api.health import router as health_router
 from dyndnsarr_hub.config import Settings
 from dyndnsarr_hub.db import MIGRATIONS
 from dyndnsarr_hub.db.state import record_boot
+from dyndnsarr_hub.services import status_refresher
 from dyndnsarr_shared.db import connect, migrate
 
 logger = logging.getLogger(__name__)
@@ -35,7 +38,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 "boot_count": boot_count,
             },
         )
-        yield
+        refresher = asyncio.create_task(
+            status_refresher.run_forever(
+                conn,
+                settings.agent_ca_file,
+                settings.status_refresh_seconds,
+                transport=app.state.agent_transport,
+            )
+        )
+        try:
+            yield
+        finally:
+            refresher.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await refresher
     finally:
         conn.close()
 
@@ -43,6 +59,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app(settings: Settings) -> FastAPI:
     app = FastAPI(title="DynDNSarr Hub", version=__version__, lifespan=lifespan)
     app.state.settings = settings
+    # Transporte del cliente que consulta a los Agents: solo lo sustituyen las pruebas.
+    app.state.agent_transport = None
     app.include_router(health_router)
     app.include_router(events_router)
     return app

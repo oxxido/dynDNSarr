@@ -43,7 +43,7 @@ def event(sequence=1, agent_id="raspberry-home", event_id=None):
 
 def test_migration_0002_applies_over_a_0001_database(tmp_path):
     conn = connect(tmp_path / "hub.db")
-    assert migrate(conn, MIGRATIONS) == 3
+    assert migrate(conn, MIGRATIONS) == 4
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"app_state", "agents", "agent_credentials", "events"} <= tables
 

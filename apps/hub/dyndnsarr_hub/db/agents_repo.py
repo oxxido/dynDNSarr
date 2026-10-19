@@ -123,3 +123,12 @@ def get_api_target(conn: sqlite3.Connection, agent_id: str) -> tuple[str | None,
     if row is None:
         raise UnknownAgentError(agent_id)
     return row[0], row[1]
+
+
+def api_targets(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
+    """`(agent_id, api_url, api_token)` de los agentes habilitados con la API configurada."""
+    rows = conn.execute(
+        "SELECT agent_id, api_url, api_token FROM agents "
+        "WHERE disabled = 0 AND api_url IS NOT NULL AND api_token IS NOT NULL ORDER BY agent_id"
+    ).fetchall()
+    return [(r[0], r[1], r[2]) for r in rows]
