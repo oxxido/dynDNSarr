@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Levanta el Hub con Docker Compose, lo reinicia y comprueba que los datos sobreviven
-# (boot_count sube en 1). Usa un proyecto y puerto propios y borra todo al terminar.
+# (boot_count sube en 1) y que la consola del Hub funciona dentro del contenedor. Usa un proyecto
+# y puerto propios y borra todo al terminar.
 # Requiere Docker. Uso: scripts/verify-compose.sh
 set -euo pipefail
 
@@ -21,6 +22,10 @@ first="$(boot_count)"
 # boot_count 1 -> 3). Aquí solo se espera a que vuelva a estar healthy.
 "${compose[@]}" up -d --wait --no-recreate
 second="$(boot_count)"
+
+# La consola del Hub corre dentro del contenedor (usuario no root, /data): alta y listado.
+"${compose[@]}" exec -T hub dyndnsarr-hub agent-add verify-agent | grep -q '^dda_'
+"${compose[@]}" exec -T hub dyndnsarr-hub agent-list | grep -q '^verify-agent '
 
 if [ "$second" -ne $((first + 1)) ]; then
     echo "FALLO: boot_count $first -> $second (se esperaba +1)" >&2
