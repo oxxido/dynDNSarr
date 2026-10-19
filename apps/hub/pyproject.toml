@@ -21,6 +21,7 @@ build-backend = "setuptools.build_meta"
 packages = [
     "dyndnsarr_hub",
     "dyndnsarr_hub.api",
+    "dyndnsarr_hub.auth",
     "dyndnsarr_hub.db",
 ]
 

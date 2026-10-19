@@ -57,11 +57,11 @@ class AgentEvent(BaseModel):
 
 class EventBatch(BaseModel):
     """Lote de eventos. Cada elemento se valida por separado en el Hub (un evento inválido no
-    rechaza el lote), por eso aquí viajan como diccionarios y se validan con `AgentEvent`."""
+    rechaza el lote), por eso aquí viajan sin tipar y se validan con `AgentEvent`."""
 
     model_config = ConfigDict(extra="forbid")
 
-    events: list[dict[str, Any]]
+    events: list[Any]
 
 
 class RejectedEvent(BaseModel):
