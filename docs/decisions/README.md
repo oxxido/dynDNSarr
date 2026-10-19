@@ -9,3 +9,4 @@ Una decisión que debe sobrevivir a un slice se registra aquí: `NNNN-titulo-cor
 | [0003](0003-motor-ddns-observacion.md) | Configuración TOML, scheduler asyncio y consenso de IP del motor DDNS |
 | [0004](0004-actualizacion-ddns-dondominio.md) | API DonDominio, credenciales, backoff y verificación de la actualización `managed` |
 | [0005](0005-enlace-agent-hub.md) | Enlace Agent → Hub: proxy TLS verificado, registro manual, token por agente, contrato y outbox at-least-once |
+| [0006](0006-control-hub-agent.md) | Control Hub → Agent: TLS propio del Agent, token Bearer, configuración versionada y comandos idempotentes |
