@@ -3,7 +3,7 @@
 - **Estado:** en revisión
 - **Fase (arquitectura):** 2, primera mitad ([architecture.md](../architecture.md) §3, §5 «Agent → Hub» y «At-least-once», §6, §11 «Pairing», §13 casos 6 y 7)
 - **Rama:** `slice/03a-enlace-seguro-eventos`
-- **PR:** —
+- **PR:** [#4](https://github.com/oxxido/dynDNSarr/pull/4)
 
 ## Objetivo
 
@@ -141,10 +141,10 @@ Ejecutado el 2026-10-19 en la rama `slice/03a-enlace-seguro-eventos`.
 | 7 | Canarios: `test_outbox_tls.py` (token y URL fuera de logs con el `setup_logging` real, de `app_state` y de `events`), `test_agent_hub_lifespan.py` (lo mismo con el Agent entero), `test_hub_events_api.py` (token fuera de los logs del Hub) y `test_hub_repos.py`/`test_hub_cli.py` (el token en claro no está en ninguna tabla; solo el `sha256`). |
 | 8 | `test_agent_hub_lifespan.py` y `test_hub_cli.py`: `status` no escribe (instantánea de tablas y `mtime`); `agent-list`/`events` sin hashes ni tokens; rotar no corta el token anterior y revocar deja solo el último. |
 | 9 | `scripts/verify-wheels.sh` en venv limpio: Agent y Hub responden `/healthz`, `dyndnsarr-agent status` (lee las columnas de 0003 y 0004), importa `outbox`, `auth` y `api.events`, y `dyndnsarr-hub agent-list` (migración 0002 del Hub). |
-| 10 | CI del PR: ver «Entrega» más abajo. |
+| 10 | CI del PR #4 en verde, incluida `hub-image` (run 39205493563: `hub-image`, `test (3.11)` y `test (3.12)`). |
 | 11 | **Pendiente del usuario** (Caddy con CA local, [operaciones §6.5](../operations.md)). |
 
-Paso 1 (CI `hub-image`): el log de la CI fallida (`gh api …/jobs/<id>/logs`, run 39051717529) muestra que el `up -d --wait` posterior al `restart` **recrea el contenedor** («Container … Recreate»), de modo que el Hub arranca dos veces (`boot_count 1 -> 3`). En local (Docker 29.3.0) no se recreaba y el script pasaba. Causa en el script, no en el Hub; corregido con `up -d --wait --no-recreate`. Local: `scripts/verify-compose.sh` → `OK … (boot_count 1 -> 2)`; la confirmación real es la CI del PR.
+Paso 1 (CI `hub-image`): el log de la CI fallida (`gh api …/jobs/<id>/logs`, run 39051717529) muestra que el `up -d --wait` posterior al `restart` **recrea el contenedor** («Container … Recreate»), de modo que el Hub arranca dos veces (`boot_count 1 -> 3`). En local (Docker 29.3.0) no se recreaba y el script pasaba. Causa en el script, no en el Hub; corregido con `up -d --wait --no-recreate`. Local: `scripts/verify-compose.sh` → `OK … (boot_count 1 -> 2)`; confirmado en la CI del PR #4: `hub-image` pasa (era la primera vez desde el slice 1).
 
 Pruebas añadidas: contrato (`tests/contract/test_events_contract.py`), repositorios y migración 0002 del Hub, API de eventos, CLI del Hub, cliente HTTP del Agent (códigos D7), bucle de entrega (lotes de 50, backoff 30→900 con reloj, `sleep` y jitter inyectados), TLS real, Agent ↔ Hub en proceso, lifespan y `status`, migración 0004 y e2e. `trustme` entra en el extra `dev`.
 
@@ -162,4 +162,6 @@ Pruebas añadidas: contrato (`tests/contract/test_events_contract.py`), reposito
 
 ## Entrega
 
-Se rellena al abrir el PR (rama, PR y resultado de la CI).
+- Rama `slice/03a-enlace-seguro-eventos`, PR [#4](https://github.com/oxxido/dynDNSarr/pull/4) contra `main`, estado **en revisión** (no fusionado).
+- CI del PR (run 39205493563): `hub-image` pass, `test (3.11)` pass, `test (3.12)` pass.
+- Falta: revisión, autorización de merge y criterio 11 (prueba manual del usuario).
