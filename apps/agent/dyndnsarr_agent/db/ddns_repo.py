@@ -180,6 +180,41 @@ def insert_event(
     return Event(cursor.lastrowid, event_id, type, iso(occurred_at), record_name, payload)
 
 
+def pending_events(conn: sqlite3.Connection, limit: int) -> list[Event]:
+    """Eventos sin entregar ni rechazar, en orden de `sequence`."""
+    rows = conn.execute(
+        "SELECT sequence, event_id, type, occurred_at, record_name, payload FROM events "
+        "WHERE delivered_at IS NULL AND rejected_code IS NULL ORDER BY sequence LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [Event(*row[:5], json.loads(row[5])) for row in rows]
+
+
+def count_pending(conn: sqlite3.Connection) -> int:
+    return conn.execute(
+        "SELECT count(*) FROM events WHERE delivered_at IS NULL AND rejected_code IS NULL"
+    ).fetchone()[0]
+
+
+def count_rejected(conn: sqlite3.Connection) -> int:
+    return conn.execute("SELECT count(*) FROM events WHERE rejected_code IS NOT NULL").fetchone()[0]
+
+
+def mark_delivered(conn: sqlite3.Connection, event_ids: list[str], at: datetime) -> None:
+    conn.executemany(
+        "UPDATE events SET delivered_at = ? WHERE event_id = ?",
+        [(iso(at), event_id) for event_id in event_ids],
+    )
+
+
+def mark_rejected(conn: sqlite3.Connection, rejected: list[tuple[str, str]]) -> None:
+    """Marca `(event_id, code)` como rechazados por el Hub: no se reenvían."""
+    conn.executemany(
+        "UPDATE events SET rejected_code = ? WHERE event_id = ?",
+        [(code, event_id) for event_id, code in rejected],
+    )
+
+
 def list_events(conn: sqlite3.Connection, limit: int, newest_first: bool = True) -> list[Event]:
     order = "DESC" if newest_first else "ASC"
     rows = conn.execute(

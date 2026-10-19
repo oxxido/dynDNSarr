@@ -50,6 +50,16 @@ def serve() -> None:
     uvicorn.run(app, host=settings.host, port=settings.port, log_config=None)
 
 
+def _hub_configured(settings: Settings) -> bool:
+    """¿Hay sección `[hub]`? `status` no exige el TOML: sin él (o ilegible) no hay enlace."""
+    if settings.config_file is None:
+        return False
+    try:
+        return load_ddns_config(settings.config_file).hub is not None
+    except ConfigError:
+        return False
+
+
 def _status(settings: Settings, **_: object) -> int:
     if not settings.db_path.exists():
         print(
@@ -68,6 +78,11 @@ def _status(settings: Settings, **_: object) -> int:
         ]
         records = ddns_repo.list_record_states(conn)
         events = ddns_repo.list_events(conn, limit=5)
+        pending = ddns_repo.count_pending(conn)
+        rejected = ddns_repo.count_rejected(conn)
+        last_delivery = ddns_repo.get_state(conn, "outbox_last_success_at")
+        last_error = ddns_repo.get_state(conn, "outbox_last_error_code")
+        last_error_at = ddns_repo.get_state(conn, "outbox_last_error_at")
     except sqlite3.OperationalError:
         print(
             "La base de datos no tiene datos del motor DDNS: arranca el Agent una vez.",
@@ -105,6 +120,14 @@ def _status(settings: Settings, **_: object) -> int:
         )
     if not events:
         print("  (ninguno)")
+    if not _hub_configured(settings):
+        print("Hub: sin configurar")
+    else:
+        # Nunca la URL ni el token: solo contadores y códigos seguros.
+        print(f"Hub: {pending} evento(s) pendiente(s), {rejected} rechazado(s)")
+        print(f"  último envío correcto: {last_delivery or 'nunca'}")
+        if last_error:
+            print(f"  último error: {last_error} (el {last_error_at})")
     return 0
 
 

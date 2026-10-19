@@ -57,6 +57,13 @@ check hub DYNDNSARR_HUB
 DYNDNSARR_AGENT_DATA_DIR="$work/data-agent" "$work/venv/bin/dyndnsarr-agent" status >/dev/null
 echo "OK: agent instalado desde wheel ejecuta 'dyndnsarr-agent status'"
 
-# El paquete `providers` debe viajar en el wheel (se declara a mano en `packages` del pyproject).
+# Los paquetes `providers`, `outbox` (Agent) y `auth` (Hub) deben viajar en el wheel (se declaran
+# a mano en `packages` de los pyproject).
 "$work/venv/bin/python" -c 'import dyndnsarr_agent.providers.dondominio, dyndnsarr_agent.providers.registry'
 echo "OK: agent instalado desde wheel importa dyndnsarr_agent.providers"
+"$work/venv/bin/python" -c 'import dyndnsarr_agent.outbox.client, dyndnsarr_agent.outbox.loop, dyndnsarr_hub.auth.tokens, dyndnsarr_hub.api.events'
+echo "OK: agent y hub instalados desde wheel importan outbox, auth y api.events"
+
+# `agent-list` falla si la migración 0002 del Hub no viajó en el wheel.
+DYNDNSARR_HUB_DATA_DIR="$work/data-hub" "$work/venv/bin/dyndnsarr-hub" agent-list >/dev/null
+echo "OK: hub instalado desde wheel ejecuta 'dyndnsarr-hub agent-list'"

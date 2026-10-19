@@ -16,6 +16,7 @@ from pydantic import (
 )
 
 from dyndnsarr_agent.config import Settings
+from dyndnsarr_shared.events import AGENT_ID_PATTERN
 
 _HOSTNAME = re.compile(
     r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
@@ -124,6 +125,34 @@ class DonDominio(_Section):
         return url
 
 
+class Hub(_Section):
+    """Hub al que se entregan los eventos. El token va por entorno, nunca aquí."""
+
+    url: str
+    agent_id: str = Field(pattern=AGENT_ID_PATTERN)
+    ca_file: Path | None = None
+
+    @field_validator("url")
+    @classmethod
+    def _check_url(cls, url: str) -> str:
+        parts = urlsplit(url)
+        loopback_http = parts.scheme == "http" and parts.hostname in _LOOPBACK_HOSTS
+        if parts.scheme != "https" and not loopback_http:
+            raise ValueError("solo https (http únicamente para localhost/127.0.0.1)")
+        if not parts.hostname or parts.username is not None or parts.password is not None:
+            raise ValueError("URL no válida (sin credenciales en la URL)")
+        if parts.query or parts.fragment:
+            raise ValueError("la URL no admite parámetros ni fragmento")
+        return url.rstrip("/")
+
+    @field_validator("ca_file")
+    @classmethod
+    def _check_ca_file(cls, ca_file: Path | None) -> Path | None:
+        if ca_file is not None and not ca_file.is_file():
+            raise ValueError("el archivo de la CA no existe")
+        return ca_file
+
+
 class Providers(_Section):
     dondominio: DonDominio = DonDominio()
 
@@ -158,6 +187,7 @@ class DdnsConfig(_Section):
     retention: Retention = Retention()
     update: Update = Update()
     providers: Providers = Providers()
+    hub: Hub | None = None
     records: list[Record] = []
 
     @field_validator("records")
@@ -186,6 +216,15 @@ def require_provider_credentials(config: DdnsConfig, settings: Settings) -> None
             "hay registros managed habilitados y faltan las credenciales de DonDominio: "
             + ", ".join(missing)
         )
+
+
+def require_hub_token(config: DdnsConfig, settings: Settings) -> None:
+    """Con `[hub]` el token es obligatorio (por entorno). Un Hub inaccesible no impide arrancar."""
+    if config.hub is None:
+        return
+    if settings.hub_token is None or not settings.hub_token.get_secret_value():
+        variable = f"{Settings.model_config['env_prefix']}HUB_TOKEN"
+        raise ConfigError(f"hay una sección [hub] y falta el token: {variable}")
 
 
 def load_ddns_config(path: Path) -> DdnsConfig:

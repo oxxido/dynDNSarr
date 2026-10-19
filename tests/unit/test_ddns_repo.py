@@ -27,7 +27,7 @@ def test_migration_0002_applies_over_the_slice1_database(tmp_path):
         "updated_at TEXT NOT NULL); INSERT INTO app_state VALUES ('boot_count', '4', 'x'); "
         "PRAGMA user_version = 1; COMMIT;"
     )
-    assert migrate(old, MIGRATIONS) == 3
+    assert migrate(old, MIGRATIONS) == 4
     tables = {r[0] for r in old.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"public_ip_observations", "dns_checks", "record_state", "events"} <= tables
     assert old.execute("SELECT value FROM app_state WHERE key = 'boot_count'").fetchone() == ("4",)
@@ -148,7 +148,7 @@ def test_migration_0003_keeps_record_state_of_a_0002_database(tmp_path):
     old.execute(
         "INSERT INTO record_state VALUES ('b.example.com', 'verified', '2026-10-14T13:00:00Z')"
     )
-    assert migrate(old, MIGRATIONS) == 3
+    assert migrate(old, MIGRATIONS) == 4
     assert ddns_repo.list_record_states(old) == [
         ddns_repo.RecordState("a.example.com", "mismatch", "2026-10-14T12:00:00Z"),
         ddns_repo.RecordState("b.example.com", "verified", "2026-10-14T13:00:00Z"),
@@ -215,3 +215,48 @@ def test_update_attempts_are_stored_and_purged_with_the_event_retention(conn):
 
 def test_parse_iso_roundtrips_iso():
     assert ddns_repo.parse_iso(ddns_repo.iso(NOW)) == NOW
+
+
+def test_migration_0004_leaves_existing_events_pending(tmp_path):
+    old = connect(tmp_path / "agent.db")
+    scripts = sorted(f for f in MIGRATIONS.iterdir() if f.name.endswith(".sql"))
+    for version, script in enumerate(scripts[:3], start=1):
+        sql = script.read_text(encoding="utf-8")
+        old.executescript(f"BEGIN;\n{sql}\nPRAGMA user_version = {version};\nCOMMIT;")
+    ddns_repo.insert_event(old, "agent_started", NOW, None, {"version": "x"})
+    ddns_repo.insert_event(old, "ip_changed", NOW, None, {"ip": "1.2.3.4"})
+    assert migrate(old, MIGRATIONS) == 4
+    assert [e.type for e in ddns_repo.pending_events(old, 10)] == ["agent_started", "ip_changed"]
+    assert ddns_repo.count_pending(old) == 2 and ddns_repo.count_rejected(old) == 0
+
+
+def test_pending_events_follow_sequence_order_and_respect_the_limit(conn):
+    for i in range(5):
+        ddns_repo.insert_event(conn, "ip_changed", NOW, None, {"n": i})
+    pending = ddns_repo.pending_events(conn, 3)
+    assert [e.payload["n"] for e in pending] == [0, 1, 2]
+    assert [e.sequence for e in pending] == sorted(e.sequence for e in pending)
+
+
+def test_delivery_marks_persist_between_connections(tmp_path):
+    path = tmp_path / "agent.db"
+    first = connect(path)
+    migrate(first, MIGRATIONS)
+    events = [ddns_repo.insert_event(first, "ip_changed", NOW, None, {"n": i}) for i in range(3)]
+    ddns_repo.mark_delivered(first, [events[0].event_id], NOW)
+    ddns_repo.mark_rejected(first, [(events[1].event_id, "invalid_event")])
+    first.close()
+    second = connect(path)
+    assert [e.event_id for e in ddns_repo.pending_events(second, 10)] == [events[2].event_id]
+    assert ddns_repo.count_pending(second) == 1 and ddns_repo.count_rejected(second) == 1
+    delivered = second.execute(
+        "SELECT delivered_at FROM events WHERE event_id = ?", (events[0].event_id,)
+    )
+    assert delivered.fetchone() == ("2026-10-14T12:00:00Z",)
+
+
+def test_retention_purge_also_removes_pending_events(conn):
+    old = NOW - timedelta(days=400)
+    ddns_repo.insert_event(conn, "ip_changed", old, None, {})
+    ddns_repo.purge(conn, NOW, samples_days=30, events_days=365)
+    assert ddns_repo.count_pending(conn) == 0

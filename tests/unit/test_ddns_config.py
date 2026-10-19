@@ -6,6 +6,7 @@ from dyndnsarr_agent.ddns.config import (
     ConfigError,
     DdnsConfig,
     load_ddns_config,
+    require_hub_token,
     require_provider_credentials,
 )
 
@@ -218,3 +219,72 @@ def test_invalid_environment_message_never_shows_the_key(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         _load_settings()
     assert "canary-key" not in str(exc.value.code)
+
+
+HUB_BASE = """
+[ip_sources]
+urls = ["https://a.example/ip", "https://b.example/ip"]
+[dns]
+resolvers = ["1.1.1.1"]
+"""
+
+
+def hub_config(tmp_path, hub: str):
+    return load_ddns_config(write(tmp_path, HUB_BASE + hub))
+
+
+def test_hub_section_is_optional(tmp_path):
+    assert hub_config(tmp_path, "").hub is None
+
+
+def test_hub_section_is_parsed(tmp_path):
+    ca = tmp_path / "ca.pem"
+    ca.write_text("x")
+    config = hub_config(
+        tmp_path,
+        f'[hub]\nurl = "https://hub.example.lan/"\nagent_id = "raspberry-home"\nca_file = "{ca}"\n',
+    )
+    assert config.hub.url == "https://hub.example.lan"
+    assert config.hub.agent_id == "raspberry-home"
+    assert config.hub.ca_file == ca
+
+
+def test_hub_http_is_allowed_only_to_loopback(tmp_path):
+    ok = hub_config(tmp_path, '[hub]\nurl = "http://127.0.0.1:8000"\nagent_id = "a"\n')
+    assert ok.hub.url == "http://127.0.0.1:8000"
+    with pytest.raises(ConfigError, match="solo https"):
+        hub_config(tmp_path, '[hub]\nurl = "http://hub.example.lan"\nagent_id = "a"\n')
+
+
+@pytest.mark.parametrize(
+    ("hub", "message"),
+    [
+        ('url = "https://"\nagent_id = "a"', "URL no válida"),
+        ('url = "https://u:p@hub.example.lan"\nagent_id = "a"', "URL no válida"),
+        ('url = "https://hub.example.lan/?x=1"\nagent_id = "a"', "parámetros"),
+        ('url = "https://hub.example.lan"\nagent_id = "Mal_Id"', "agent_id"),
+        (
+            'url = "https://hub.example.lan"\nagent_id = "a"\nca_file = "/no/existe.pem"',
+            "no existe",
+        ),
+        ('url = "https://hub.example.lan"\nagent_id = "a"\ntoken = "x"', "token"),
+        ('agent_id = "a"', "url"),
+    ],
+)
+def test_invalid_hub_sections_are_rejected(tmp_path, hub, message):
+    with pytest.raises(ConfigError, match=message):
+        hub_config(tmp_path, f"[hub]\n{hub}\n")
+
+
+def test_hub_requires_the_token_from_the_environment(tmp_path):
+    config = hub_config(tmp_path, '[hub]\nurl = "https://hub.example.lan"\nagent_id = "a"\n')
+    with pytest.raises(ConfigError, match="DYNDNSARR_AGENT_HUB_TOKEN") as exc:
+        require_hub_token(config, Settings(data_dir=tmp_path))
+    assert "dda_" not in str(exc.value)
+    require_hub_token(config, Settings(data_dir=tmp_path, hub_token="dda_valor"))
+    with pytest.raises(ConfigError):
+        require_hub_token(config, Settings(data_dir=tmp_path, hub_token=""))
+
+
+def test_no_token_needed_without_hub_section(tmp_path):
+    require_hub_token(hub_config(tmp_path, ""), Settings(data_dir=tmp_path))

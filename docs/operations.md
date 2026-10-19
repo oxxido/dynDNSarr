@@ -1,6 +1,6 @@
 # Operación
 
-Guía de arranque y despliegue (slices 1 y 2a). Variables de configuración: [.env.example](../.env.example).
+Guía de arranque y despliegue (slices 1 a 3a). Variables de configuración: [.env.example](../.env.example).
 
 Ambos componentes escuchan por defecto en `127.0.0.1`. Cámbialo solo con un firewall que limite el origen: el Agent no debe ser accesible desde Internet ni por equipos distintos al Hub.
 
@@ -65,12 +65,14 @@ docker compose ps                   # el estado pasa a "healthy"
 - Los datos están en el volumen `hub-data` (`/data` en el contenedor). El contenedor corre como usuario no root (uid 10001).
 - **Dockge:** crear un stack con el contenido de `apps/hub/compose.yaml` y cambiar `build.context` por la ruta absoluta del clon del repositorio en el servidor (el `../..` relativo solo vale dentro del repositorio). Este camino no está verificado en este slice.
 - Verificación automática (build, healthcheck, restart y persistencia, con proyecto y puerto propios que se eliminan al terminar): `scripts/verify-compose.sh`.
+- El Hub habla **HTTP** y recibe el token de cada Agent: no publiques su puerto a la LAN. Déjalo en `127.0.0.1` (o en la red de Docker del proxy) y pon delante un proxy TLS (§6).
+- Consola del Hub (registro de agentes y eventos recibidos), dentro del contenedor: `docker compose exec hub dyndnsarr-hub agent-list` (§6).
 
 ## 4. Backup y restauración
 
 Los dos componentes son una SQLite en modo WAL. Las copias contienen datos de configuración: protégelas (`0600`) y no las subas al repositorio.
 
-- **Agent:** con el servicio parado (`sudo systemctl stop dyndnsarr-agent`), copiar `/var/lib/dyndnsarr/agent.db*` (incluye `-wal` y `-shm` si existen) y `/etc/dyndnsarr/agent.toml`. Restaurar: servicio parado, copiar los archivos de vuelta con dueño `dyndnsarr` y modo `0600`, arrancar.
+- **Agent:** con el servicio parado (`sudo systemctl stop dyndnsarr-agent`), copiar `/var/lib/dyndnsarr/agent.db*` (incluye `-wal` y `-shm` si existen) y `/etc/dyndnsarr/agent.toml`. **Antes de actualizar al slice 3a**: la migración 0004 añade columnas a `events` (los eventos ya guardados quedan pendientes de entrega) y no hay vuelta atrás automática. Restaurar: servicio parado, copiar los archivos de vuelta con dueño `dyndnsarr` y modo `0600`, arrancar.
 - **Hub (`/data`)**, con el servicio parado:
   ```bash
   docker compose stop hub
@@ -176,3 +178,77 @@ El Agent y `sync-ddns` se coordinan con un `flock` sobre `<data_dir>/ddns.lock`:
 
 - **`monitored`:** con `home.example.com` apuntando ya a tu IP: arranca el Agent, espera un ciclo y ejecuta `status` (el registro debe estar `verified`). Reinicia el servicio: `status` conserva el historial y se hace una comprobación inmediata.
 - **`managed`** (con un subdominio de prueba, no el de producción): deja el registro A apuntando a otra IP, configúralo como `managed` y ejecuta `sync-ddns`. Debe salir `pending_verification`; deja el daemon corriendo y repite `status` hasta ver `verified`, y confirma desde fuera con `dig +short ddns.example.com @1.1.1.1`. Anota cuánto tardó y ajusta `verify_timeout_seconds`.
+
+## 6. Enlace Agent → Hub: entrega de eventos (slice 3a)
+
+El Agent entrega al Hub los eventos que guarda en su SQLite (`agent_started`, `ip_changed`, `dns_*`…) con entrega **at-least-once**: cada evento se marca como entregado solo tras el ACK del Hub, que deduplica por `(agent_id, event_id)`. Con el Hub parado los eventos se acumulan en el Agent y, al volver, llegan una sola vez y en orden. El DDNS no depende del Hub: sin él (o mal configurado) el Agent actualiza y verifica igual. Todavía no hay UI: se inspecciona por consola.
+
+El Hub no termina TLS: va **detrás de un proxy TLS** y el Agent verifica siempre el certificado (no hay forma de desactivarlo). El token viaja en una cabecera `Authorization`, por eso `http://` solo se admite hacia `localhost`/`127.0.0.1` (pruebas) y el puerto del Hub no debe estar abierto a la LAN.
+
+### 6.1 Proxy TLS con Caddy y CA local
+
+Receta no probada contra tu infraestructura (criterio manual del slice). En el servidor del Hub, con el Hub publicado solo en `127.0.0.1:8000` (§3) y `hub.example.lan` resolviendo a ese servidor en tu LAN:
+
+```
+# Caddyfile
+hub.example.lan {
+    tls internal            # certificado de la CA local de Caddy
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+El Agent debe confiar en esa CA: copia la raíz de Caddy a la Raspberry y apúntala con `ca_file` (solo esa CA se acepta; sin `ca_file` se usa el almacén del sistema, para certificados públicos):
+
+```bash
+# en el servidor de Caddy (ruta por defecto; en Docker está en el volumen de datos de Caddy)
+cat ~/.local/share/caddy/pki/authorities/local/root.crt
+# en la Raspberry
+sudo install -m 0644 -o root -g dyndnsarr root.crt /etc/dyndnsarr/hub-ca.pem
+```
+
+La limitación de tasa por IP la aporta el proxy (el Hub no tiene).
+
+### 6.2 Alta de un agente
+
+Desde el servidor del Hub (la consola corre dentro del contenedor; el token se muestra **una sola vez** y el Hub guarda solo su hash):
+
+```bash
+docker compose exec hub dyndnsarr-hub agent-add raspberry-home
+```
+
+`agent_id` cumple `^[a-z0-9][a-z0-9-]{0,62}$`. En la Raspberry:
+
+1. `/etc/dyndnsarr/agent.toml`: la sección `[hub]` (ver [agent.example.toml](../apps/agent/config/agent.example.toml)): `url`, `agent_id` y, con CA privada, `ca_file`.
+2. `/etc/dyndnsarr/agent.env` (0600): `DYNDNSARR_AGENT_HUB_TOKEN=dda_…`. Con `[hub]` y sin token el Agent no arranca; el mensaje nombra la variable.
+3. `sudo systemctl restart dyndnsarr-agent`. El arranque hace una pasada inmediata y, mientras haya pendientes, otra cada 30 s. Al activar `[hub]` se envía el histórico retenido (hasta `retention.events_days`), en lotes de 50.
+
+### 6.3 Consola del Hub
+
+| Comando | Qué hace |
+|---|---|
+| `agent-add <agent_id>` | Registra el agente y emite su primer token. Error si ya existe. |
+| `agent-rotate <agent_id>` | Emite un token nuevo **sin** revocar los anteriores. |
+| `agent-revoke <agent_id>` | Revoca todos los tokens salvo el último emitido. Con `--all`, revoca todos y deshabilita al agente (un `agent-rotate` posterior lo reactiva). |
+| `agent-list` | Agentes, estado, tokens vigentes y última vez visto. Nunca muestra tokens ni hashes. |
+| `events [--agent ID] [--limit N]` | Últimos eventos recibidos (con su IP: es la vista privada). |
+
+**Rotación sin perder eventos:** `agent-rotate` → poner el token nuevo en `agent.env` → `sudo systemctl restart dyndnsarr-agent` → `agent-revoke`. Si se revoca un token en uso, el Agent no pierde nada: retiene los eventos (`auth_failed`) y los entrega al corregir el token.
+
+### 6.4 Estado del enlace y fallos
+
+`dyndnsarr-agent status` muestra los eventos pendientes y rechazados, el último envío correcto y el último error (nunca la URL ni el token):
+
+| Código | Causa habitual |
+|---|---|
+| `connect_error`, `timeout` | Hub parado o inaccesible. Reintenta con espera de 30 s, 60 s, 120 s… hasta 15 min (±20 %), y se queda en 30 s al recuperarse. |
+| `tls_error` | El certificado del proxy no lo firma la CA configurada (falta `ca_file`, CA equivocada o caducada). Los eventos siguen pendientes. |
+| `auth_failed` | Token inválido, revocado o de otro agente (401/403). Se registra una vez por racha y se sigue reintentando. |
+| `rate_limited`, `server_error`, `http_error`, `bad_response` | 429, 5xx, otro estado o respuesta ilegible. |
+
+Un evento que el Hub rechaza por inválido (`invalid_event`, `payload_too_large`) queda marcado como rechazado y no se reenvía ni bloquea a los siguientes. Los eventos pendientes se purgan igual que los demás a los `retention.events_days`.
+
+### 6.5 Comprobación manual
+
+1. `agent-add`, configurar el Agent con `ca_file` y reiniciarlo: `dyndnsarr-hub events` debe mostrar `agent_started`.
+2. Parar el Hub, forzar eventos (reiniciar el Agent, o `sync-ddns` con un cambio de IP), comprobar con `status` que quedan pendientes, arrancar el Hub y esperar hasta unos 15 minutos (o reiniciar el Agent): `events` los muestra **una sola vez**.
+3. Quitar `ca_file` (o usar otra CA): `status` debe mostrar `tls_error` y los eventos seguir pendientes.

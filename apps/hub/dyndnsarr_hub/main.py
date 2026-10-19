@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from dyndnsarr_hub import __version__
+from dyndnsarr_hub.api.events import router as events_router
 from dyndnsarr_hub.api.health import router as health_router
 from dyndnsarr_hub.config import Settings
 from dyndnsarr_hub.db import MIGRATIONS
@@ -43,4 +44,5 @@ def create_app(settings: Settings) -> FastAPI:
     app = FastAPI(title="DynDNSarr Hub", version=__version__, lifespan=lifespan)
     app.state.settings = settings
     app.include_router(health_router)
+    app.include_router(events_router)
     return app

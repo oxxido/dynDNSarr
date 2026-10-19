@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.scripts]
-dyndnsarr-hub = "dyndnsarr_hub.__main__:main"
+dyndnsarr-hub = "dyndnsarr_hub.cli:cli"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -21,6 +21,7 @@ build-backend = "setuptools.build_meta"
 packages = [
     "dyndnsarr_hub",
     "dyndnsarr_hub.api",
+    "dyndnsarr_hub.auth",
     "dyndnsarr_hub.db",
 ]
 

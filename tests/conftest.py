@@ -3,7 +3,9 @@ import importlib
 import json
 import socketserver
 import threading
+import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from types import ModuleType
 from urllib.parse import parse_qs, urlsplit
 
@@ -12,6 +14,8 @@ import dns.message
 import dns.rcode
 import dns.rrset
 import pytest
+import trustme
+import uvicorn
 
 
 @dataclass(frozen=True)
@@ -218,3 +222,78 @@ def fake_dondominio(fake_dns):
     server = FakeDonDominio(fake_dns)
     yield server
     server.close()
+
+
+class TlsHub:
+    """Un Hub real (`create_app`) servido por Uvicorn con TLS de una CA de `trustme`.
+
+    `ca_file` es la CA que firma su certificado; `other_ca_file`, una CA que no lo firmó.
+    """
+
+    def __init__(self, tmp_path) -> None:
+        from dyndnsarr_hub.auth.tokens import generate_token, hash_token
+        from dyndnsarr_hub.config import Settings
+        from dyndnsarr_hub.db import MIGRATIONS, agents_repo
+        from dyndnsarr_hub.main import create_app
+        from dyndnsarr_shared.db import connect, migrate, transaction
+
+        self.agent_id = "raspberry-home"
+        self.token = generate_token()
+        self.db_path = tmp_path / "hub-data" / "hub.db"
+        conn = connect(self.db_path)
+        migrate(conn, MIGRATIONS)
+        with transaction(conn):
+            agents_repo.create_agent(conn, self.agent_id, hash_token(self.token), datetime.now(UTC))
+        conn.close()
+
+        ca, other = trustme.CA(), trustme.CA()
+        cert = ca.issue_cert("127.0.0.1", "localhost")
+        self.ca_file = tmp_path / "ca.pem"
+        self.other_ca_file = tmp_path / "other-ca.pem"
+        key_file, cert_file = tmp_path / "hub-key.pem", tmp_path / "hub-cert.pem"
+        ca.cert_pem.write_to_path(self.ca_file)
+        other.cert_pem.write_to_path(self.other_ca_file)
+        cert.private_key_pem.write_to_path(key_file)
+        cert.cert_chain_pems[0].write_to_path(cert_file)
+
+        app = create_app(Settings(data_dir=tmp_path / "hub-data"))
+        config = uvicorn.Config(
+            app,
+            host="127.0.0.1",
+            port=0,
+            ssl_keyfile=str(key_file),
+            ssl_certfile=str(cert_file),
+            log_config=None,
+        )
+        self._server = uvicorn.Server(config)
+        self._thread = threading.Thread(target=self._server.run, daemon=True)
+        self._thread.start()
+        deadline = time.monotonic() + 10
+        while not self._server.started:
+            assert time.monotonic() < deadline, "el Hub TLS de pruebas no arrancó"
+            time.sleep(0.02)
+        self.port = self._server.servers[0].sockets[0].getsockname()[1]
+
+    @property
+    def url(self) -> str:
+        return f"https://127.0.0.1:{self.port}"
+
+    def stored_event_ids(self) -> list[str]:
+        import sqlite3
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            return [r[0] for r in conn.execute("SELECT event_id FROM events ORDER BY sequence")]
+        finally:
+            conn.close()
+
+    def close(self) -> None:
+        self._server.should_exit = True
+        self._thread.join(timeout=10)
+
+
+@pytest.fixture
+def tls_hub(tmp_path):
+    hub = TlsHub(tmp_path)
+    yield hub
+    hub.close()

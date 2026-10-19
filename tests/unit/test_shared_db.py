@@ -122,3 +122,14 @@ def test_transaction_commits_and_rolls_back(tmp_path):
         conn.execute("INSERT INTO t VALUES (2)")
         raise RuntimeError
     assert conn.execute("SELECT n FROM t").fetchall() == [(1,)]
+
+
+def test_connect_does_not_open_an_existing_file_with_its_own_descriptor(tmp_path, monkeypatch):
+    # Cerrar un descriptor propio de la BD libera los bloqueos POSIX de las demás conexiones
+    # del proceso: una segunda `connect` no debe tocarla (hubo escrituras perdidas por esto).
+    path = tmp_path / "x.db"
+    first = connect(path)
+    monkeypatch.setattr("os.open", lambda *a, **k: pytest.fail("no debe abrir la BD existente"))
+    second = connect(path)
+    first.execute("CREATE TABLE t (n INTEGER)")
+    assert second.execute("SELECT count(*) FROM t").fetchone() == (0,)

@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     # Credenciales de DonDominio: solo por entorno, nunca en el TOML.
     dondominio_user: SecretStr | None = None
     dondominio_key: SecretStr | None = None
+    # Token del Agent ante el Hub (solo con `[hub]` en el TOML): solo por entorno.
+    hub_token: SecretStr | None = None
 
     @property
     def lock_path(self) -> Path:
