@@ -3,10 +3,13 @@
 import json
 import re
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
+from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -451,3 +454,62 @@ def test_theme_selector_persists_before_first_paint(tmp_path):
     assert "localStorage.setItem('dyndnsarr-theme'" in response.text
     assert "prefers-reduced-motion:reduce" in response.text
     assert "color-scheme" in response.text and page.find("meta", name="viewport")
+
+
+# --- estáticos y aislamiento del Agent ---
+
+ASSETS = Path(__file__).parents[2] / "apps/hub/dyndnsarr_hub/static/assets"
+MASCOTS = ("dyno-green.png", "dyno-orange.png", "dyno-red.png")
+
+
+@pytest.mark.skipif(
+    not all((ASSETS / m).exists() for m in MASCOTS),
+    reason="faltan los PNG de la mascota (slice 4, paso 9: los aporta el usuario)",
+)
+@pytest.mark.parametrize("name", MASCOTS)
+def test_the_mascot_pngs_are_served(tmp_path, name):
+    with hub(tmp_path) as client:
+        response = client.get(f"/static/assets/{name}")
+    assert response.status_code == 200 and response.headers["content-type"] == "image/png"
+    assert response.content.startswith(b"\x89PNG")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/static/%2e%2e/main.py",
+        "/static/..%2fmain.py",
+        "/static/assets/../../main.py",
+        "/static/assets/",
+        "/static/",
+        "/static/assets/missing.png",
+    ],
+)
+def test_static_does_not_escape_its_directory_nor_list_it(tmp_path, path):
+    with hub(tmp_path) as client:
+        assert client.get(path).status_code == 404
+
+
+def test_public_requests_never_call_the_agent(tmp_path):
+    calls = []
+
+    def agent(request):
+        calls.append(request.url.path)
+        raise httpx.ConnectError("sin Agent")
+
+    make_db(tmp_path, healthy_seed)
+    conn = connect(tmp_path / "hub.db")
+    with transaction(conn):
+        agents_repo.set_api_url(conn, AGENT, "https://agent.test")
+    conn.close()
+    app = create_app(Settings(data_dir=tmp_path, status_refresh_seconds=3600))
+    app.state.agent_transport = httpx.MockTransport(agent)
+    with TestClient(app) as client:
+        deadline = time.monotonic() + 5
+        while not calls:  # la primera pasada del refresco, al arrancar
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        before = list(calls)
+        for path in ("/", "/public/v1/status", "/", "/public/v1/status"):
+            assert client.get(path).status_code == 200
+        assert calls == before == ["/internal/v1/status"]
