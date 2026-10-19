@@ -30,6 +30,7 @@ packages = [
 ]
 
 [tool.setuptools.package-data]
+"dyndnsarr_hub" = ["templates/public/*.j2", "static/assets/*.png"]
 "dyndnsarr_hub.db" = ["migrations/*.sql"]
 
 [tool.setuptools.dynamic]

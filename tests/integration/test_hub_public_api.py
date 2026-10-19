@@ -1,9 +1,11 @@
 """`GET /public/v1/status` con el Hub real (slice 4): estados, canarios, desactivación, métodos."""
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from html.parser import HTMLParser
 
 import pytest
 from fastapi.testclient import TestClient
@@ -250,3 +252,202 @@ def test_building_the_dto_never_reads_events(tmp_path):
     conn.close()
     assert read_tables
     assert "events" not in read_tables and "agent_credentials" not in read_tables
+
+
+# --- la página `GET /` ---
+
+
+class Page(HTMLParser):
+    """Lo mínimo del DOM que se inspecciona: etiquetas, atributos y texto."""
+
+    def __init__(self, html):
+        super().__init__()
+        self.tags: list[tuple[str, dict]] = []
+        self.text: list[str] = []
+        self._stack: list[str] = []
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        self.tags.append((tag, dict(attrs)))
+        if tag not in ("img", "meta", "br", "input"):
+            self._stack.append(tag)
+
+    def handle_endtag(self, tag):
+        if tag in self._stack:
+            while self._stack and self._stack.pop() != tag:
+                pass
+
+    def handle_data(self, data):
+        if not {"script", "style"} & set(self._stack):
+            self.text.append(data)
+
+    def find(self, tag, **attrs):
+        return [
+            a for t, a in self.tags if t == tag and all(a.get(k) == v for k, v in attrs.items())
+        ]
+
+    @property
+    def visible(self):
+        return " ".join(" ".join(self.text).split())
+
+
+def landing(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    return response, Page(response.text)
+
+
+def seed_state(state):
+    t = now()
+
+    def degraded(conn):
+        public_repo.save_agent_status(conn, projection(ip_status="uncertain"))
+
+    def critical(conn):
+        old = RecordProjection(RECORD, "mismatch", t - timedelta(hours=2), 0, None, None)
+        public_repo.save_agent_status(conn, projection(records=[old]))
+
+    return {"healthy": healthy_seed, "degraded": degraded, "critical": critical, "unknown": None}[
+        state
+    ]
+
+
+@pytest.mark.parametrize(
+    ("state", "title", "klass", "mascot"),
+    [
+        ("healthy", "Operativo", "state-green", "dyno-green.png"),
+        ("degraded", "Degradado", "state-orange", "dyno-orange.png"),
+        ("critical", "Sin conexión", "state-red", "dyno-red.png"),
+        ("unknown", "Desconocido", "state-unknown", "dyno-green.png"),
+    ],
+)
+def test_each_state_renders_its_class_texts_and_mascot(tmp_path, state, title, klass, mascot):
+    with hub(tmp_path, seed_state(state)) as client:
+        _, page = landing(client)
+    [app] = page.find("div", id="app")
+    assert klass in app["class"].split()
+    assert page.find("h1", id="heroTitle") and f" {title} " in f" {page.visible} "
+    [hero] = page.find("img", id="heroMascot")
+    assert hero["src"] == f"/static/assets/{mascot}"
+    assert title.lower() in hero["alt"]
+    assert ("mascot-unknown" in hero["class"]) == (state == "unknown")
+    # El hero y la tarjeta salen de un único valor del estado.
+    assert page.visible.count(title) >= 2
+
+
+def test_unknown_does_not_claim_that_the_connection_is_down(tmp_path):
+    with hub(tmp_path) as client:
+        _, page = landing(client)
+    assert "No hay datos suficientes para confirmar el estado actual." in page.visible
+    assert "Estamos mostrando el último estado conocido" not in page.visible
+    assert page.visible.count("Sin conexión") == 1  # solo la leyenda del historial
+
+
+def test_the_mockup_demo_bits_are_gone(tmp_path):
+    with hub(tmp_path, healthy_seed) as client:
+        response, page = landing(client)
+    assert [a["id"] for a in page.find("select")] == ["theme"]
+    assert "simulad" not in response.text.lower() and "demostraci" not in response.text.lower()
+    ipv6 = [t for t in page.visible.split("Conectividad IPv6")[1:2]]
+    assert ipv6 and ipv6[0].lstrip().startswith("No disponible")
+    assert "IPv6" not in page.visible.replace("Conectividad IPv6", "")
+
+
+def test_csp_nonce_covers_every_script_and_style_and_changes_per_request(tmp_path):
+    with hub(tmp_path, healthy_seed) as client:
+        first, page = landing(client)
+        second, _ = landing(client)
+    csp = first.headers["content-security-policy"]
+    nonce = re.search(r"script-src 'nonce-([^']+)'", csp).group(1)
+    assert f"style-src 'nonce-{nonce}'" in csp
+    assert "unsafe-inline" not in csp and "unsafe-eval" not in csp
+    assert "default-src 'none'" in csp and "frame-ancestors 'none'" in csp
+    scripts, styles = page.find("script"), page.find("style")
+    assert len(scripts) == 2 and len(styles) == 1
+    assert all(a.get("nonce") == nonce for a in scripts + styles)
+    assert nonce not in second.headers["content-security-policy"]
+    assert first.headers["cache-control"] == "no-store"
+    assert first.headers["x-content-type-options"] == "nosniff"
+    assert first.headers["referrer-policy"] == "no-referrer"
+    assert first.headers["content-type"].startswith("text/html")
+
+
+def test_the_page_has_no_inline_style_attributes_nor_event_handlers(tmp_path):
+    with hub(tmp_path, healthy_seed, public_show_domains=True) as client:
+        _, page = landing(client)
+    for tag, attrs in page.tags:
+        assert "style" not in attrs, tag
+        assert not any(name.startswith("on") for name in attrs), tag
+        assert "href" not in attrs, tag
+        assert attrs.get("src", "/static/").startswith("/static/"), tag
+
+
+def test_a_record_name_is_escaped_and_only_shown_when_authorised(tmp_path):
+    evil = "<script>alert(1)</script>.example.com"
+
+    def seed(conn):
+        healthy_seed(conn)
+        conn.execute("UPDATE public_renewals SET record_name = ?", (evil,))
+
+    with hub(tmp_path / "a", seed, public_show_domains=True) as client:
+        response, page = landing(client)
+    assert evil not in response.text
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;.example.com" in response.text
+    assert len(page.find("script")) == 2
+    with hub(tmp_path / "b", seed) as client:
+        response, _ = landing(client)
+    assert "alert(1)" not in response.text
+
+
+def test_no_private_value_reaches_the_html(tmp_path):
+    with hub(tmp_path, healthy_seed) as client:
+        response, _ = landing(client)
+    text = response.text + str(dict(response.headers))
+    for name, secret in SECRETS.items():
+        assert secret not in text, name
+    assert RECORD not in text and "IP terminada en 34" in text
+
+
+def test_renewal_rows_show_the_suffix_and_their_verification(tmp_path):
+    t = now()
+
+    def seed(conn):
+        healthy_seed(conn)
+        public_repo.add_renewal(conn, AGENT, "r0", RECORD, t - timedelta(days=1), "07")
+        public_repo.mark_verified(conn, AGENT, RECORD, "07", t)
+
+    with hub(tmp_path, seed) as client:
+        _, page = landing(client)
+    text = page.visible
+    assert "IP terminada en 34" in text and "Pendiente de verificación" in text
+    assert "IP terminada en 07" in text and "Correcta" in text
+    assert text.index("IP terminada en 34") < text.index("IP terminada en 07")
+
+
+def test_an_empty_renewal_list_says_so(tmp_path):
+    with hub(tmp_path) as client:
+        _, page = landing(client)
+    assert "Aún no hay renovaciones registradas." in page.visible
+    assert "Sin comprobaciones" in page.visible
+
+
+def test_the_history_has_84_labelled_bars(tmp_path):
+    with hub(tmp_path, healthy_seed) as client:
+        _, page = landing(client)
+    bars = [a for t, a in page.tags if t == "button" and "bar" in a["class"].split()]
+    assert len(bars) == 84
+    assert all(b["title"] and b["aria-label"] == b["title"] for b in bars)
+    assert bars[-1]["class"] == "bar" and "operativo" in bars[-1]["title"]
+    assert all("unknown" in b["class"] and "sin datos" in b["title"] for b in bars[:-1])
+
+
+def test_theme_selector_persists_before_first_paint(tmp_path):
+    with hub(tmp_path, healthy_seed) as client:
+        response, page = landing(client)
+    options = re.findall(r'<option value="(\w+)">', response.text)
+    assert options == ["system", "light", "dark"]
+    head = response.text.split("<style", 1)[0]
+    assert "dyndnsarr-theme" in head and "prefers-color-scheme" in head
+    assert "localStorage.setItem('dyndnsarr-theme'" in response.text
+    assert "prefers-reduced-motion:reduce" in response.text
+    assert "color-scheme" in response.text and page.find("meta", name="viewport")

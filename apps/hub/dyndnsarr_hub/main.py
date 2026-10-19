@@ -3,8 +3,10 @@ import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from dyndnsarr_hub import __version__
 from dyndnsarr_hub.api.events import router as events_router
@@ -17,6 +19,8 @@ from dyndnsarr_hub.services import status_refresher
 from dyndnsarr_shared.db import connect, migrate
 
 logger = logging.getLogger(__name__)
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 @asynccontextmanager
@@ -67,4 +71,5 @@ def create_app(settings: Settings) -> FastAPI:
     if settings.public_enabled:
         # Desactivada, las rutas públicas no existen: el 404 es el de cualquier ruta ausente.
         app.include_router(public_router)
+        app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app
