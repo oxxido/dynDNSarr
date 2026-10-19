@@ -9,6 +9,8 @@ from fastapi import FastAPI
 
 from dyndnsarr_agent import __version__
 from dyndnsarr_agent.api.health import router as health_router
+from dyndnsarr_agent.api.internal import router as internal_router
+from dyndnsarr_agent.commands.executor import CommandExecutor
 from dyndnsarr_agent.config import Settings
 from dyndnsarr_agent.db import MIGRATIONS, ddns_repo
 from dyndnsarr_agent.db.state import record_boot
@@ -86,10 +88,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 rebuild=rebuild,
             )
             app.state.holder = holder
+            executor = None
+            if settings.api_enabled:
+                executor = CommandExecutor(conn, holder, client, settings.lock_path)
+                executor.recover()
+                app.state.executor = executor
             tasks = [
                 asyncio.create_task(run_forever(conn, holder, client, lock_path=settings.lock_path))
             ]
             app.state.ddns_task = tasks[0]
+            if executor is not None:
+                tasks.append(asyncio.create_task(executor.run()))
             hub = ddns_config.hub
             if hub is not None:
                 # Cliente y conexión propios: la entrega no comparte nada con el ciclo DDNS.
@@ -138,13 +147,22 @@ def create_app(
                 ) from None
             raise
         require_hub_token(active.config, settings)
+    if settings.api_enabled and active is None:
+        prefix = Settings.model_config["env_prefix"]
+        raise ConfigError(
+            f"{prefix}API_TOKEN necesita {prefix}CONFIG_FILE: la configuración remota se "
+            "superpone sobre el TOML local"
+        )
     app.state.active = active
     app.state.ddns_config = active.config if active else None
     app.state.holder = None
+    app.state.executor = None
     app.state.ddns_observer = observer
     app.state.ddns_transport = transport
     app.state.ddns_task = None
     app.state.hub_transport = hub_transport
     app.state.outbox_task = None
     app.include_router(health_router)
+    if settings.api_enabled:
+        app.include_router(internal_router)
     return app
