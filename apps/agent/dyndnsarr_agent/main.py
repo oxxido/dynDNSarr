@@ -3,6 +3,7 @@ import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import httpx
 from fastapi import FastAPI
@@ -122,6 +123,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                         await task
     finally:
         conn.close()
+
+
+def server_options(settings: Settings) -> dict[str, Any]:
+    """Opciones de `uvicorn.run`: con TLS configurado sirve HTTPS (también `/healthz`)."""
+    options: dict[str, Any] = {"host": settings.host, "port": settings.port, "log_config": None}
+    if settings.tls_enabled:
+        options["ssl_certfile"] = str(settings.tls_cert_file)
+        options["ssl_keyfile"] = str(settings.tls_key_file)
+    return options
 
 
 def create_app(

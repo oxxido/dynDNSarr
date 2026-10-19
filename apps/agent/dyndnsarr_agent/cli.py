@@ -22,7 +22,7 @@ from dyndnsarr_agent.ddns.cycle import record_ip_samples
 from dyndnsarr_agent.ddns.ip_sources import detect_public_ip
 from dyndnsarr_agent.dns.resolver import DnsObserver, DnspythonObserver
 from dyndnsarr_agent.logging_setup import setup_logging
-from dyndnsarr_agent.main import create_app
+from dyndnsarr_agent.main import create_app, server_options
 from dyndnsarr_agent.providers.registry import build_providers
 from dyndnsarr_agent.scheduler import try_lock, utc_now
 from dyndnsarr_shared.db import connect, migrate, transaction
@@ -52,7 +52,7 @@ def serve() -> None:
         app = create_app(settings)
     except ConfigError as exc:
         sys.exit(str(exc))
-    uvicorn.run(app, host=settings.host, port=settings.port, log_config=None)
+    uvicorn.run(app, **server_options(settings))
 
 
 def _hub_configured(settings: Settings) -> bool:
