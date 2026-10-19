@@ -1,6 +1,6 @@
 # Slice 3a — Enlace seguro y entrega de eventos (Agent → Hub)
 
-- **Estado:** planificado
+- **Estado:** en revisión
 - **Fase (arquitectura):** 2, primera mitad ([architecture.md](../architecture.md) §3, §5 «Agent → Hub» y «At-least-once», §6, §11 «Pairing», §13 casos 6 y 7)
 - **Rama:** `slice/03a-enlace-seguro-eventos`
 - **PR:** —
@@ -128,4 +128,38 @@ Commits pequeños, tests antes del código. Cada paso termina con `ruff` y `pyte
 
 ## Evidencia
 
-Comandos ejecutados, salidas relevantes, enlaces. Se rellena al implementar.
+Ejecutado el 2026-10-19 en la rama `slice/03a-enlace-seguro-eventos`.
+
+| Criterio | Evidencia |
+|---|---|
+| 1 | `ruff check .`, `ruff format --check .` y `pytest` (470 pruebas, 18 de ellas e2e): verde en Python 3.12.3 (`.venv`) y 3.11.17 (`.venv/py311`). |
+| 2, 6 | `tests/e2e/test_hub_link.py` (Agent y Hub como procesos reales): con el Hub sin arrancar el Agent hace su ciclo (`verified`), los eventos quedan pendientes; al arrancar el Hub y reiniciar el Agent llegan **todos una vez**, con el mismo `event_id` y `sequence`; otro reinicio solo añade `agent_started`. 15 ejecuciones seguidas en verde. |
+| 2 (en proceso) | `tests/integration/test_agent_hub.py`: Hub caído varios ciclos con DDNS real, luego llegan todos en orden; un Hub caído no cambia el resultado de los ciclos DDNS. |
+| 3 | Mismo archivo: ACK perdido (el Hub guarda y la respuesta se pierde) → reenvío → una fila; reenvío manual del lote → una fila. `tests/integration/test_hub_events_api.py`: duplicados → `acked` sin segunda fila. |
+| 4 | API: 401 con el mismo cuerpo sin cabecera, con token malo, revocado, agente deshabilitado y esquema distinto de Bearer; 403 con token de otro agente; nada se guarda. En proceso y e2e: token revocado/equivocado → eventos retenidos (`auth_failed`) y entregados al corregirlo. |
+| 5 | `tests/integration/test_outbox_tls.py` (Uvicorn con TLS y CA de `trustme`): con `ca_file` correcto entrega; sin la CA (almacén del sistema) o con otra CA → `tls_error` y los eventos siguen pendientes; `ca_file` sustituye al almacén del sistema (`get_ca_certs()` = 1). No existe ruta de código con `verify=False`. |
+| 7 | Canarios: `test_outbox_tls.py` (token y URL fuera de logs con el `setup_logging` real, de `app_state` y de `events`), `test_agent_hub_lifespan.py` (lo mismo con el Agent entero), `test_hub_events_api.py` (token fuera de los logs del Hub) y `test_hub_repos.py`/`test_hub_cli.py` (el token en claro no está en ninguna tabla; solo el `sha256`). |
+| 8 | `test_agent_hub_lifespan.py` y `test_hub_cli.py`: `status` no escribe (instantánea de tablas y `mtime`); `agent-list`/`events` sin hashes ni tokens; rotar no corta el token anterior y revocar deja solo el último. |
+| 9 | `scripts/verify-wheels.sh` en venv limpio: Agent y Hub responden `/healthz`, `dyndnsarr-agent status` (lee las columnas de 0003 y 0004), importa `outbox`, `auth` y `api.events`, y `dyndnsarr-hub agent-list` (migración 0002 del Hub). |
+| 10 | CI del PR: ver «Entrega» más abajo. |
+| 11 | **Pendiente del usuario** (Caddy con CA local, [operaciones §6.5](../operations.md)). |
+
+Paso 1 (CI `hub-image`): el log de la CI fallida (`gh api …/jobs/<id>/logs`, run 39051717529) muestra que el `up -d --wait` posterior al `restart` **recrea el contenedor** («Container … Recreate»), de modo que el Hub arranca dos veces (`boot_count 1 -> 3`). En local (Docker 29.3.0) no se recreaba y el script pasaba. Causa en el script, no en el Hub; corregido con `up -d --wait --no-recreate`. Local: `scripts/verify-compose.sh` → `OK … (boot_count 1 -> 2)`; la confirmación real es la CI del PR.
+
+Pruebas añadidas: contrato (`tests/contract/test_events_contract.py`), repositorios y migración 0002 del Hub, API de eventos, CLI del Hub, cliente HTTP del Agent (códigos D7), bucle de entrega (lotes de 50, backoff 30→900 con reloj, `sleep` y jitter inyectados), TLS real, Agent ↔ Hub en proceso, lifespan y `status`, migración 0004 y e2e. `trustme` entra en el extra `dev`.
+
+## Desviaciones y hallazgos
+
+- **`connect()` perdía escrituras con dos conexiones en el proceso (cambio en `shared`).** Un e2e fallaba de forma intermitente (≈1 de cada 4): el log decía `cycle_completed` pero los eventos del ciclo no estaban en la BD. Causa: `connect()` abría y cerraba un descriptor propio del archivo (para fijar el modo `0600`) en cada llamada, y en POSIX cerrar cualquier descriptor de un archivo libera todos los bloqueos `fcntl` del proceso sobre él, también los de la otra conexión SQLite (la del ciclo DDNS; la tarea de entrega abre una segunda). Ahora solo lo hace al crear el archivo. Prueba unitaria añadida; 15 e2e seguidos en verde tras el cambio. Es una regla nueva en `conventions.md`.
+- **`EventBatch.events` es `list[Any]`**, no `list[dict]`: D4 exige validar cada evento por separado, y un elemento que no es un objeto tumbaría el lote entero. `AgentEvent` incluye `agent_id` (§5) y el Hub rechaza (`invalid_event`) el evento cuyo `agent_id` no es el de la ruta.
+- **El límite de 4 KiB de payload se mide sobre el JSON serializado** (`payload_too_large`). Un lote con un evento así se acepta y solo ese va a `rejected`.
+- **403 vs 401:** un token válido de otro agente da 403 (el plan lo pide); todo lo demás, 401 idéntico. Revela que el token existe, pero no de quién.
+- **La tarea de entrega usa su propia conexión SQLite** (además de su cliente `httpx`), no la del ciclo: así nunca comparte transacciones ni se bloquean entre sí. La primera pasada es inmediata al arrancar; después, cada 30 s (los eventos del ciclo de arranque salen en la pasada siguiente, o antes si el Agent se reinicia).
+- **`status` muestra el enlace solo si el TOML (si `DYNDNSARR_AGENT_CONFIG_FILE` está definido) tiene `[hub]`**; en otro caso imprime `Hub: sin configurar`. Sigue sin exigir el TOML.
+- **`create_app` del Agent recibe `hub_transport`** (solo pruebas), igual que `transport`.
+- **Escritura fuera del repositorio:** durante el diagnóstico del flake dejé salidas de depuración en el directorio temporal de la sesión (`scratchpad`, fuera de `code/dynDNSarr`), que ya se borraron, y usé `--basetemp` allí. Las pruebas siguen usando el `tmp_path` de pytest (`/tmp/pytest-of-…`), como en los slices anteriores. El venv de Python 3.11 se creó dentro del repositorio (`.venv/py311`, ignorado por git).
+- No se implementó (fuera de alcance): mTLS, limitación de tasa en el Hub, tope propio del outbox, códigos de emparejamiento.
+
+## Entrega
+
+Se rellena al abrir el PR (rama, PR y resultado de la CI).

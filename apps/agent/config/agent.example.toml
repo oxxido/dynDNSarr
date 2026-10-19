@@ -23,6 +23,14 @@ events_days = 365
 verify_retry_seconds = 60       # mínimo 1
 verify_timeout_seconds = 900    # no menor que verify_retry_seconds
 
+# Entrega de eventos al Hub (slice 3a, docs/operations.md §6). Opcional: sin esta sección no hay
+# entrega. El token del agente va en DYNDNSARR_AGENT_HUB_TOKEN (agent.env), nunca aquí. Con esta
+# sección y sin token el Agent no arranca; un Hub inaccesible nunca impide arrancar.
+# [hub]
+# url = "https://hub.example.lan"         # https; http solo a localhost/127.0.0.1 (pruebas)
+# agent_id = "raspberry-home"             # el mismo que se dio de alta con `agent-add`
+# ca_file = "/etc/dyndnsarr/hub-ca.pem"   # CA privada que firma el proxy del Hub; sin ella, almacén del sistema
+
 # [providers.dondominio]
 # url = "https://dondns.dondominio.com/json/"   # solo se cambia para pruebas (http solo a localhost)
 

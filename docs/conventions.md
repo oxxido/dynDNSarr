@@ -72,3 +72,18 @@ Detalle: [slices/02b-actualizacion-ddns-managed.md](slices/02b-actualizacion-ddn
 - Credenciales de DonDominio solo por `DYNDNSARR_AGENT_DONDOMINIO_USER`/`_KEY` (`SecretStr`). La clave viaja en la URL (API por GET): `httpx`/`httpcore` en `WARNING` es un control de seguridad (su INFO imprime la URL), los adaptadores devuelven códigos seguros y nunca el texto de una excepción, y hay pruebas con valor canario.
 - `flock` no bloqueante sobre `<data_dir>/ddns.lock` coordina el daemon con `sync-ddns`. `sync-ddns` ignora backoff y bloqueo por error definitivo, no la deduplicación.
 - Pruebas: `FakeDonDominio` en loopback (`tests/conftest.py`) que, al aceptar, cambia lo que responde `FakeDns`; fixtures del adaptador tomados de respuestas reales.
+
+## Fijado en slice3a
+
+Detalle: [slices/03a-enlace-seguro-eventos.md](slices/03a-enlace-seguro-eventos.md) (D1–D8) y [ADR-0005](decisions/0005-enlace-agent-hub.md).
+
+- Contrato Agent → Hub en `packages/shared/dyndnsarr_shared/events.py` (`/api/v1`): `AgentEvent` ignora campos desconocidos; `EventBatch`, `EventBatchResult` y `ErrorResponse` los rechazan. El Hub valida **cada evento por separado** (uno inválido va a `rejected` y no bloquea el lote) y `acked` incluye los duplicados.
+- TLS siempre verificado: el cliente del Hub se construye con `build_ssl_context(ca_file)` (solo esa CA, o el almacén del sistema). `http://` solo a loopback. El Hub no termina TLS: va detrás de un proxy.
+- Token por agente: `dda_` + 32 bytes aleatorios, solo el `sha256` en la BD del Hub, `SecretStr` por entorno (`DYNDNSARR_AGENT_HUB_TOKEN`) en el Agent. Todo fallo de autenticación responde 401 con el mismo cuerpo; la autenticación va **antes** de leer el cuerpo. Ni el token ni la URL del Hub salen en logs, eventos, `app_state` ni CLI: el cliente devuelve códigos seguros (`timeout`, `connect_error`, `tls_error`, `auth_failed`…), nunca el texto de una excepción.
+- Outbox = la tabla `events` del Agent (`delivered_at`, `rejected_code`; pendiente = ambos nulos). Solo se marca tras el ACK; un rechazo explícito no se reenvía ni bloquea.
+- La tarea de entrega es independiente del ciclo DDNS: cliente `httpx` y **conexión SQLite propias**, y nunca mantiene una transacción abierta a través de un `await`. Backoff 30 s ×2 hasta 900 s con jitter ±20 %; la racha de fallos se loguea al empezar y al terminar.
+- `connect()` solo abre un descriptor propio del archivo al crearlo: en POSIX, cerrar cualquier descriptor de la BD libera los bloqueos de las demás conexiones del proceso y se pierden escrituras. Con más de una conexión por proceso, no abrir ni cerrar la BD por otra vía.
+- El Hub guarda la IP completa en `events` (vista privada): el DTO público (slice 4) no debe leer esa tabla.
+- CLI del Hub: `dyndnsarr-hub agent-add | agent-rotate | agent-revoke [--all] | agent-list | events`; el token se imprime una vez.
+- Pruebas: Hub real tras `ASGITransport` para el enlace en proceso, y `TlsHub` (Uvicorn con CA de `trustme`, `tests/conftest.py`) para TLS real.
+

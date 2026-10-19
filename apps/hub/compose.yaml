@@ -7,6 +7,8 @@ services:
     restart: unless-stopped
     # Por defecto solo escucha en el propio servidor. Para la LAN, fija
     # DYNDNSARR_HUB_BIND a la IP LAN del servidor (ver docs/operations.md).
+    # El Hub habla HTTP: el Agent le envía su token, así que publícalo solo en loopback o en la
+    # red del proxy TLS (Caddy) que va delante; nunca directo a la LAN (docs/operations.md §6).
     ports:
       - "${DYNDNSARR_HUB_BIND:-127.0.0.1}:${DYNDNSARR_HUB_PORT:-8000}:8000"
     environment:

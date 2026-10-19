@@ -41,7 +41,7 @@ Pendientes que **no** figuran en A1–A7 y afectan al slice1 (resolver al planif
 
 ## Insumos para slice3b
 
-Puntos que 3a deja abiertos a propósito (resolver al planificar 3b):
+Puntos que 3a deja abiertos a propósito. Resueltos en [03b-control-hub-agent.md](docs/slices/03b-control-hub-agent.md) (TLS: D1; configuración: D4 y D5; comandos: D6); se retiran al implementar 3b:
 
 - **TLS en el Agent:** el Hub llama al Agent (Raspberry, sin proxy). Decidir entre TLS en Uvicorn con certificado de la CA local o un proxy en la Raspberry; el token Hub → Agent es distinto del Agent → Hub.
 - **Configuración versionada:** hoy la config del motor es el TOML (2a D1) y los secretos van por entorno. 3b debe decidir qué parte reemplaza el Hub (registros, fuentes, resolvers), dónde se guarda la versión activa (`configuration_versions`, §6), cómo se valida atómicamente y qué ocurre con el TOML.
