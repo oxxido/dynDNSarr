@@ -47,7 +47,7 @@ def test_migration_0003_applies_over_a_0002_database_with_data(tmp_path):
             ],
             NOW,
         )
-    assert migrate(conn, MIGRATIONS) == 3
+    assert migrate(conn, MIGRATIONS) == len(scripts)
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"desired_config_versions", "observed_agent_state", "commands"} <= tables
     assert conn.execute("SELECT count(*) FROM events").fetchone() == (1,)
