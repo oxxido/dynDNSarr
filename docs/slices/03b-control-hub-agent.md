@@ -1,9 +1,9 @@
 # Slice 3b — Control Hub → Agent: estado, configuración versionada y comandos
 
-- **Estado:** en implementación
+- **Estado:** en revisión
 - **Fase (arquitectura):** 2, segunda mitad ([architecture.md](../architecture.md) §3, §5 «Hub → Agent», «Comandos» y «Configuración», §6, §11, §13 casos 9 y comando duplicado)
 - **Rama:** `slice/03b-control-hub-agent`
-- **PR:** —
+- **PR:** [#5](https://github.com/oxxido/dynDNSarr/pull/5)
 
 ## Objetivo
 
@@ -162,7 +162,7 @@ Ejecutado el 2026-10-19 en la rama `slice/03b-control-hub-agent`.
 | 7 | Canarios: `test_internal_api.py` (token de API, token del Hub, clave de DonDominio y URL del Hub fuera de respuestas y logs, con las rutas de error incluidas), `test_commands.py` (texto de una excepción fuera de resultado, evento y log), `test_hub_control_cli.py` (token de la API fuera de toda salida del Hub; solo se imprime al emitirlo), `tests/unit/test_hub_control_repo.py` (el token no sale en el listado) y `test_hub_agent_client.py` (repr de la respuesta) y el e2e final (logs de ambos procesos y consolas sin token de API, token del Hub, clave y usuario de DonDominio ni su URL). |
 | 8 | E2E `test_the_agent_works_without_the_hub_…`: con el Hub caído el Agent arranca y cicla, `config-reset` + reinicio → `Configuración: TOML local`, al volver el Hub llega `config_reset`, el Hub ve versión 0 y `config-resend` lo vuelve a aplicar. En proceso: resultado de un comando con el Hub caído llega por evento al volver, una sola vez. |
 | 9 | `PYTHON=python3.11 scripts/verify-wheels.sh` en venv limpio: `/healthz` de ambos, `dyndnsarr-agent status` (lee `configuration_versions`, 0005), importa `commands`, `api.internal`, `apply_config`, `services.agent_client` y `services.events_handlers`, y `dyndnsarr-hub agent-list` (lee `api_url`, 0003). |
-| 10 | Se anota tras abrir el PR. |
+| 10 | CI del PR #5 en verde (run 39211932001): `test (3.11)`, `test (3.12)` e `hub-image` (que ya ejecuta las comprobaciones nuevas de `verify-compose.sh` dentro de la imagen). |
 | 11 | **Pendiente del usuario** ([operaciones §7.5](../operations.md)). La receta de `openssl` de §7.1 sí se ejecutó aquí (CA → certificado con IP en el SAN → `openssl verify` → OK; y el módulo `ssl` de Python rechaza una IP que no está en el SAN). |
 
 Desviaciones respecto al plan (además de las de «Ajustes tras 3a»):
@@ -173,4 +173,4 @@ Desviaciones respecto al plan (además de las de «Ajustes tras 3a»):
 - Se añadió `command-show --refresh` (pregunta al Agent con `GET commands/{id}`); un 404 **no** marca el comando como fallido (el `POST` pudo quedar en vuelo), solo un rechazo explícito del `POST` lo hace. Lo encontró una prueba de la CLI.
 - `agent-list` del Hub muestra la URL de la API (no el token). El Hub necesita `httpx` en tiempo de ejecución (se añadió a sus dependencias).
 - El outbox entrega cada 30 s (3a): las pruebas e2e que esperan eventos tardan hasta ~60–90 s (`test_hub_control.py` ≈ 87 s).
-- `scripts/verify-compose.sh` ahora comprueba también `agent-set-api` y `agent-api-token` dentro de la imagen. **No se ejecutó en local** (requiere Docker, compartido con otros servicios del servidor, y los comandos que lo afectan los autoriza el usuario): lo ejecuta la CI (`hub-image`).
+- `scripts/verify-compose.sh` ahora comprueba también `agent-set-api` y `agent-api-token` dentro de la imagen. **No se ejecutó en local** (requiere Docker, compartido con otros servicios del servidor, y los comandos que lo afectan los autoriza el usuario): lo ejecuta la CI (`hub-image`), que pasa.
