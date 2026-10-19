@@ -6,6 +6,7 @@ Cubre los criterios 2-8 del slice. El ciclo del daemon corre cada segundo porque
 
 import json
 import os
+import re
 import signal
 import socket
 import sqlite3
@@ -147,22 +148,25 @@ class Stack:
 
     # --- Hub ---
 
-    def hub_env(self):
+    def hub_env(self, **overrides):
         return {
             **os.environ,
             "DYNDNSARR_HUB_HOST": "127.0.0.1",
             "DYNDNSARR_HUB_PORT": str(self.hub_port),
             "DYNDNSARR_HUB_DATA_DIR": str(self.hub_data),
             "DYNDNSARR_HUB_AGENT_CA_FILE": str(self.ca_file),
+            # Slice 4: el refresco del estado público, acortado para no esperar un minuto.
+            "DYNDNSARR_HUB_STATUS_REFRESH_SECONDS": "15",
+            **overrides,
         }
 
     def hub(self, *args, check=True):
         return run(sys.executable, "-m", "dyndnsarr_hub", *args, env=self.hub_env(), check=check)
 
-    def start_hub(self):
+    def start_hub(self, **overrides):
         self.hub_proc = subprocess.Popen(
             [sys.executable, "-m", "dyndnsarr_hub"],
-            env=self.hub_env(),
+            env=self.hub_env(**overrides),
             stdout=subprocess.DEVNULL,
             stderr=self.hub_log.open("a"),
         )
@@ -482,3 +486,64 @@ def test_the_agent_works_without_the_hub_reset_returns_to_the_toml_and_nothing_l
     for secret in (stack.api_token, stack.hub_token, DD_KEY, DD_USER, stack.fake_dd.url):
         assert secret not in blob
     assert "Traceback" not in blob
+
+
+def test_public_landing_shows_real_state_without_private_data_and_goes_unknown(stack):
+    """Slice 4, criterios 2-7: estado real, sin la IP completa ni secretos, `Desconocido` al
+    apagar el Agent y 404 con la página desactivada. La IP del Agent (`1.2.3.4`) es el canario."""
+    started(stack)
+    base = f"http://127.0.0.1:{stack.hub_port}"
+
+    def status():
+        body = httpx.get(f"{base}/public/v1/status", timeout=5).json()
+        # Con el Agent sano el registro `managed` queda pendiente de verificación (degradado);
+        # hay que esperar al refresco (15 s) y a que el outbox entregue la renovación (30 s).
+        return body if body["state"] == "degraded" and body["renewals"] else None
+
+    body = wait_until(status, 90)
+    assert body["last_successful_check_at"] is not None
+    assert [(r["ip_suffix"], r["verification"], r["record"]) for r in body["renewals"]] == [
+        ("4", "pending", None)
+    ]
+    page = httpx.get(f"{base}/", timeout=5)
+    assert page.status_code == 200 and "Degradado" in page.text
+    assert "Pendiente de verificación" in page.text and "IP terminada en 4" in page.text
+    assert "simulad" not in page.text.lower() and 'id="demoState"' not in page.text
+    nonce = re.search(r"script-src 'nonce-([^']+)'", page.headers["content-security-policy"])[1]
+    assert page.text.count(f'nonce="{nonce}"') == 3 and "unsafe-inline" not in str(page.headers)
+
+    public = json.dumps(
+        stack.hub_rows("SELECT * FROM public_renewals")
+        + stack.hub_rows("SELECT * FROM public_agent_status")
+        + stack.hub_rows("SELECT * FROM public_status_samples")
+    )
+    served = page.text + str(dict(page.headers)) + json.dumps(body)
+    for secret in (A, "1.2.3", stack.hub_token, stack.api_token, DD_USER, DD_KEY):
+        assert secret not in served + public, secret
+    # SHOW_DOMAINS apagado por defecto: las tablas guardan el nombre, pero no se sirve.
+    for name in ("old.example.com", "m.example.com"):
+        assert name not in served
+
+    # Agent apagado: pasada la caducidad (3 refrescos) la página pasa a Desconocido sola.
+    stack.stop_agent()
+    stopped = wait_until(
+        lambda: (
+            (b := httpx.get(f"{base}/public/v1/status", timeout=5).json())["state"] == "unknown"
+            and b
+        ),
+        120,
+    )
+    assert stopped["last_successful_check_at"] == body["last_successful_check_at"]
+    assert stopped["history"]["coverage"] > 0
+    page = httpx.get(f"{base}/", timeout=5)
+    assert "Desconocido" in page.text and "Sin comprobaciones" not in page.text
+    assert "Estamos mostrando el último estado conocido" not in page.text
+
+    # Desactivada: las tres rutas públicas son un 404 como cualquier otra.
+    stack.stop_hub()
+    stack.start_hub(DYNDNSARR_HUB_PUBLIC_ENABLED="false")
+    missing = httpx.get(f"{base}/no-such-route", timeout=5)
+    for path in ("/", "/public/v1/status", "/static/assets/dyno-green.png"):
+        response = httpx.get(f"{base}{path}", timeout=5)
+        assert (response.status_code, response.content) == (404, missing.content), path
+    assert httpx.get(f"{base}/healthz", timeout=5).status_code == 200

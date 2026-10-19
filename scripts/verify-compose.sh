@@ -31,6 +31,10 @@ second="$(boot_count)"
 "${compose[@]}" exec -T hub dyndnsarr-hub agent-api-token verify-agent | grep -q '^ddh_'
 "${compose[@]}" exec -T hub dyndnsarr-hub agent-list | grep -q 'api: https://agent.example.lan:8001'
 
+# Landing pública (slice 4): la imagen trae la plantilla y responde `/` con 200.
+"${compose[@]}" exec -T hub python -c \
+    "import urllib.request; r = urllib.request.urlopen('http://127.0.0.1:8000/'); assert r.status == 200 and b'Estado del servicio' in r.read()"
+
 if [ "$second" -ne $((first + 1)) ]; then
     echo "FALLO: boot_count $first -> $second (se esperaba +1)" >&2
     exit 1

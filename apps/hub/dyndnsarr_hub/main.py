@@ -71,5 +71,7 @@ def create_app(settings: Settings) -> FastAPI:
     if settings.public_enabled:
         # Desactivada, las rutas públicas no existen: el 404 es el de cualquier ruta ausente.
         app.include_router(public_router)
-        app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+        # `check_dir=False`: sin los PNG de la mascota (pendientes) el directorio no viaja en el
+        # wheel; el Hub debe arrancar igualmente y dar 404 en `/static`.
+        app.mount("/static", StaticFiles(directory=STATIC_DIR, check_dir=False), name="static")
     return app

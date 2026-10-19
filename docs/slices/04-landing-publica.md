@@ -125,4 +125,15 @@ Si el slice resulta grande, se puede cortar como 4a (pasos 1–7: proyección, r
 
 ## Evidencia
 
-Se rellena al implementar: comandos ejecutados, salidas relevantes y enlaces, por criterio de aceptación.
+Ejecutado el 2026-10-19 en Python 3.12 (venv local; la CI cubre 3.11).
+
+- **Estado de implementación:** pasos 1–8, 10 y 11 hechos. **Paso 9 incompleto**: faltan los tres PNG (los aporta el usuario); `StaticFiles`, `package-data` y `jinja2` están hechos, pero no hay imágenes que servir. Los tests de los PNG (`test_the_mascot_pngs_are_served`) se saltan (3 skipped) hasta que existan.
+- **1, 8 (lint y pruebas):** `ruff check`, `ruff format --check` y `pytest` completo (incluye e2e): 793 passed, 3 skipped. El e2e `test_public_landing_shows_real_state_without_private_data_and_goes_unknown` pasó 4 de 4 veces seguidas.
+- **2 (ausencia de datos privados):** canario `83.45.12.134` (el Agent exige IPv4 global; el `203.0.113.134` del plan es de documentación). `test_no_private_value_reaches_the_json_nor_the_headers`, `test_no_private_value_reaches_the_html`, `test_public_tables_never_hold_the_full_ip` y el e2e con procesos reales (HTML, JSON, cabeceras y tablas `public_*`, tokens y credenciales); el DTO rechaza IP completa y campos extra (`test_public_dto.py`, `test_public_contract.py`).
+- **3, 4, 5 (estado, desconocido, historial):** `test_public_state.py` (cada regla de D3 y sus bordes, agregado, barras y `coverage`), `test_hub_public_api.py` y el e2e (Agent apagado → `Desconocido` sin tocar la página, conservando la hora de la última comprobación). El e2e no puede mostrar «gris desde la caída» a nivel de barra (todo cae en una barra de 2 h); eso lo cubren las pruebas unitarias.
+- **6, 7 (publicación y seguridad):** 404 idéntico con la página desactivada (integración y e2e), solo `GET` (405), CSP con nonce distinto por petición y sin `'unsafe-inline'`, sin `style=` ni `on*`, escape de un nombre con `<script>`, `test_public_requests_never_call_the_agent`, y logs del refresco solo con códigos (`test_the_loop_survives_errors_logs_only_safe_codes_and_stops_when_cancelled`).
+- **8 (maqueta):** sin selector de demostración ni «simulados»; CSS de la maqueta salvo lo retirado y unas pocas clases añadidas (la CSP prohíbe `style=`). Capturas con Chrome headless (escritorio y móvil, con imágenes rotas por falta de PNG).
+- **9 (retención):** purga a 30 días, tope de 50 renovaciones y migración 0004 sobre una BD 0003 con datos (`test_hub_public_repo.py`).
+- **10:** `scripts/verify-wheels.sh` en venv limpio: la plantilla viaja en el wheel y `/` responde; avisa de que no comprobó los PNG. Encontró un fallo real (sin PNG el directorio `static` no viaja y el Hub no arrancaba): `StaticFiles(check_dir=False)`. `verify-compose.sh` se ha ampliado (`/` con 200) pero no se ha ejecutado aquí (requiere Docker; lo ejecuta la CI).
+- **Hallazgo:** una conexión TLS ociosa del pool de `httpx` en el Hub retrasaba más de 15 s el apagado del Agent; `build_http_client` ya no mantiene conexiones persistentes (`max_keepalive_connections=0`).
+- **Pendiente (usuario):** criterio 11 (CI en el PR), criterio 12 (manual, [operaciones §8.4](../operations.md)) y los tres PNG.
