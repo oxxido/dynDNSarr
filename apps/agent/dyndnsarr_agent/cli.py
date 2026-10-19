@@ -9,7 +9,8 @@ import uvicorn
 from pydantic import ValidationError
 
 from dyndnsarr_agent.config import Settings
-from dyndnsarr_agent.db import MIGRATIONS, ddns_repo
+from dyndnsarr_agent.db import MIGRATIONS, control_repo, ddns_repo
+from dyndnsarr_agent.ddns.active_config import load_active
 from dyndnsarr_agent.ddns.config import (
     ConfigError,
     DdnsConfig,
@@ -86,6 +87,7 @@ def _status(settings: Settings, **_: object) -> int:
         last_delivery = ddns_repo.get_state(conn, "outbox_last_success_at")
         last_error = ddns_repo.get_state(conn, "outbox_last_error_code")
         last_error_at = ddns_repo.get_state(conn, "outbox_last_error_at")
+        version = control_repo.latest_version(conn)
     except sqlite3.OperationalError:
         print(
             "La base de datos no tiene datos del motor DDNS: arranca el Agent una vez.",
@@ -95,6 +97,10 @@ def _status(settings: Settings, **_: object) -> int:
     finally:
         conn.close()
     print(f"Base de datos: {settings.db_path}")
+    if version is None:
+        print("Configuración: TOML local")
+    else:
+        print(f"Configuración: versión {version.version} (hash {version.content_hash[:12]})")
     print(f"Última comprobación: {last_check or 'nunca'}")
     if ip_status is None:
         print("IP pública: desconocida (sin observaciones)")
@@ -142,7 +148,7 @@ def _load_ddns(settings: Settings) -> DdnsConfig | None:
         )
         return None
     try:
-        return load_ddns_config(settings.config_file)
+        return load_active(settings).config
     except ConfigError as exc:
         print(exc, file=sys.stderr)
         return None
@@ -274,11 +280,32 @@ def _sync_ddns(
     return 1 if failed else 0
 
 
+def _config_reset(settings: Settings, **_: object) -> int:
+    """Borra las versiones remotas: al reiniciar, el Agent vuelve a la configuración del TOML."""
+    conn = _open_db(settings)
+    try:
+        with transaction(conn):
+            previous = control_repo.latest_version(conn)
+            if previous is None:
+                print("No hay configuración remota: ya manda el TOML.")
+                return 0
+            control_repo.delete_versions(conn)
+            ddns_repo.insert_event(
+                conn, "config_reset", utc_now(), None, {"previous_version": previous.version}
+            )
+    finally:
+        conn.close()
+    print(f"Configuración remota (versión {previous.version}) borrada.")
+    print("Reinicia el Agent para que use la configuración del TOML.")
+    return 0
+
+
 _COMMANDS = {
     "status": _status,
     "check-ip": _check_ip,
     "check-dns": _check_dns,
     "sync-ddns": _sync_ddns,
+    "config-reset": _config_reset,
 }
 
 
@@ -299,6 +326,7 @@ def run(
         "sync-ddns",
         help="actualiza ahora los registros managed (ignora la espera de backoff)",
     )
+    sub.add_parser("config-reset", help="descarta la configuración remota del Hub y vuelve al TOML")
     args = parser.parse_args(argv)
     if args.command in (None, "serve"):
         serve()

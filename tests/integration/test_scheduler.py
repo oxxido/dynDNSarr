@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from dyndnsarr_agent.config import Settings
 from dyndnsarr_agent.db import MIGRATIONS
+from dyndnsarr_agent.ddns.active_config import ConfigHolder
 from dyndnsarr_agent.ddns.config import ConfigError, DdnsConfig
 from dyndnsarr_agent.dns.resolver import ResolverAnswer
 from dyndnsarr_agent.main import create_app
@@ -198,7 +199,7 @@ def drive(conn, config, observer, cycles):
 
     async def go():
         async with httpx.AsyncClient(transport=httpx.MockTransport(sources)) as client:
-            await run_forever(conn, config, client, observer, sleep=sleep)
+            await run_forever(conn, ConfigHolder(config, {}, observer), client, sleep=sleep)
 
     with pytest.raises(Stop):
         asyncio.run(go())
@@ -273,15 +274,12 @@ def drive_managed(tmp_path, provider, cycles, lock_path=None):
 
     async def go():
         async with httpx.AsyncClient(transport=httpx.MockTransport(sources)) as client:
-            await run_forever(
-                conn,
+            holder = ConfigHolder(
                 DdnsConfig.model_validate(MANAGED_CONFIG),
-                client,
+                {"dondominio": provider},
                 StaleObserver(),
-                sleep=sleep,
-                providers={"dondominio": provider},
-                lock_path=lock_path,
             )
+            await run_forever(conn, holder, client, sleep=sleep, lock_path=lock_path)
 
     with pytest.raises(Stop):
         asyncio.run(go())
@@ -348,9 +346,8 @@ def test_the_lock_is_released_when_the_task_is_cancelled_mid_cycle(tmp_path):
             task = asyncio.create_task(
                 run_forever(
                     conn,
-                    DdnsConfig.model_validate(MANAGED_CONFIG),
+                    ConfigHolder(DdnsConfig.model_validate(MANAGED_CONFIG), {}, Hanging()),
                     client,
-                    Hanging(),
                     lock_path=lock,
                 )
             )

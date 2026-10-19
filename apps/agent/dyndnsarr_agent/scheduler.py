@@ -4,16 +4,14 @@ import fcntl
 import logging
 import os
 import sqlite3
-from collections.abc import Awaitable, Callable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 
-from dyndnsarr_agent.ddns.config import DdnsConfig
+from dyndnsarr_agent.ddns.active_config import ConfigHolder
 from dyndnsarr_agent.ddns.cycle import run_cycle
-from dyndnsarr_agent.dns.resolver import DnsObserver
-from dyndnsarr_agent.providers.base import DnsProvider
 
 logger = logging.getLogger(__name__)
 
@@ -40,20 +38,20 @@ def try_lock(path: Path) -> Iterator[bool]:
 
 async def run_forever(
     conn: sqlite3.Connection,
-    config: DdnsConfig,
+    holder: ConfigHolder,
     client: httpx.AsyncClient,
-    observer: DnsObserver,
     clock: Callable[[], datetime] = utc_now,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-    providers: Mapping[str, DnsProvider] | None = None,
     lock_path: Path | None = None,
 ) -> None:
     """Ciclo inmediato y luego uno cada `check_interval_seconds`, o antes si hay algo que vence.
 
-    Un ciclo fallido no detiene el bucle. Con `lock_path`, cada ciclo toma el bloqueo que usa
-    `sync-ddns` y, si lo encuentra tomado, se salta.
+    Cada vuelta toma la configuración vigente del `holder` (un cambio remoto lo recoge el ciclo
+    siguiente). Un ciclo fallido no detiene el bucle. Con `lock_path`, cada ciclo toma el bloqueo
+    que usa `sync-ddns` y, si lo encuentra tomado, se salta.
     """
     while True:
+        config, providers, observer = holder.config, holder.providers, holder.observer
         wait = float(config.check_interval_seconds)
         try:
             with try_lock(lock_path) if lock_path else contextlib.nullcontext(True) as taken:

@@ -12,8 +12,10 @@ from dyndnsarr_agent.api.health import router as health_router
 from dyndnsarr_agent.config import Settings
 from dyndnsarr_agent.db import MIGRATIONS, ddns_repo
 from dyndnsarr_agent.db.state import record_boot
+from dyndnsarr_agent.ddns.active_config import RESET_HINT, ActiveConfig, ConfigHolder, load_active
 from dyndnsarr_agent.ddns.config import (
-    load_ddns_config,
+    ConfigError,
+    DdnsConfig,
     require_hub_token,
     require_provider_credentials,
 )
@@ -48,11 +50,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 "boot_count": boot_count,
             },
         )
-        ddns_config = app.state.ddns_config
-        if ddns_config is None:
+        active: ActiveConfig | None = app.state.active
+        if active is None:
             logger.info("ddns_engine_disabled")
             yield
             return
+        ddns_config = active.config
         ddns_repo.insert_event(
             conn,
             "agent_started",
@@ -60,23 +63,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             None,
             {"version": __version__, "boot_count": boot_count},
         )
-        observer = app.state.ddns_observer or DnspythonObserver(ddns_config.dns.resolvers)
         async with contextlib.AsyncExitStack() as stack:
             # TLS verificado (valor por defecto de httpx); `transport` solo se inyecta en pruebas.
             client = await stack.enter_async_context(
                 httpx.AsyncClient(transport=app.state.ddns_transport)
             )
+
+            def rebuild(config: DdnsConfig):
+                # Proveedores y observador de una configuración; el observador inyectado (pruebas)
+                # se conserva.
+                observer = app.state.ddns_observer or DnspythonObserver(config.dns.resolvers)
+                return build_providers(config, settings, client), observer
+
+            providers, observer = rebuild(ddns_config)
+            holder = ConfigHolder(
+                ddns_config,
+                providers,
+                observer,
+                base_raw=active.base_raw,
+                version=active.version,
+                content_hash=active.content_hash,
+                rebuild=rebuild,
+            )
+            app.state.holder = holder
             tasks = [
-                asyncio.create_task(
-                    run_forever(
-                        conn,
-                        ddns_config,
-                        client,
-                        observer,
-                        providers=build_providers(ddns_config, settings, client),
-                        lock_path=settings.lock_path,
-                    )
-                )
+                asyncio.create_task(run_forever(conn, holder, client, lock_path=settings.lock_path))
             ]
             app.state.ddns_task = tasks[0]
             hub = ddns_config.hub
@@ -116,11 +127,20 @@ def create_app(
     """
     app = FastAPI(title="DynDNSarr Agent", version=__version__, lifespan=lifespan)
     app.state.settings = settings
-    ddns_config = load_ddns_config(settings.config_file) if settings.config_file else None
-    if ddns_config is not None:
-        require_provider_credentials(ddns_config, settings)
-        require_hub_token(ddns_config, settings)
-    app.state.ddns_config = ddns_config
+    active = load_active(settings) if settings.config_file else None
+    if active is not None:
+        try:
+            require_provider_credentials(active.config, settings)
+        except ConfigError as exc:
+            if active.version:
+                raise ConfigError(
+                    f"{exc}\nLa versión activa {active.version} lo exige: {RESET_HINT}"
+                ) from None
+            raise
+        require_hub_token(active.config, settings)
+    app.state.active = active
+    app.state.ddns_config = active.config if active else None
+    app.state.holder = None
     app.state.ddns_observer = observer
     app.state.ddns_transport = transport
     app.state.ddns_task = None
