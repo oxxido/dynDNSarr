@@ -17,7 +17,9 @@ boot_count() {
 "${compose[@]}" up -d --build --wait
 first="$(boot_count)"
 "${compose[@]}" restart hub
-"${compose[@]}" up -d --wait
+# --no-recreate: en la CI `up` recreaba el contenedor tras el restart (un arranque de más:
+# boot_count 1 -> 3). Aquí solo se espera a que vuelva a estar healthy.
+"${compose[@]}" up -d --wait --no-recreate
 second="$(boot_count)"
 
 if [ "$second" -ne $((first + 1)) ]; then
