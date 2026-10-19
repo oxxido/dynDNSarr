@@ -15,6 +15,10 @@ EVENT_TYPES = frozenset(
         "dns_update_succeeded",
         "dns_update_failed",
         "dns_verification_failed",
+        "config_applied",
+        "config_rejected",
+        "config_reset",
+        "command_completed",
     }
 )
 
@@ -237,6 +241,7 @@ def purge(
         ("dns_checks", "observed_at", samples_limit),
         ("events", "occurred_at", events_limit),
         ("dns_update_attempts", "attempted_at", events_limit),
+        ("commands", "received_at", events_limit),
     ):
         # Tabla y columna son constantes de este módulo, nunca entrada externa.
         deleted[table] = conn.execute(f"DELETE FROM {table} WHERE {column} < ?", (limit,)).rowcount
