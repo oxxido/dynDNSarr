@@ -12,7 +12,11 @@ from dyndnsarr_agent.api.health import router as health_router
 from dyndnsarr_agent.config import Settings
 from dyndnsarr_agent.db import MIGRATIONS, ddns_repo
 from dyndnsarr_agent.db.state import record_boot
-from dyndnsarr_agent.ddns.config import load_ddns_config, require_provider_credentials
+from dyndnsarr_agent.ddns.config import (
+    load_ddns_config,
+    require_hub_token,
+    require_provider_credentials,
+)
 from dyndnsarr_agent.dns.resolver import DnsObserver, DnspythonObserver
 from dyndnsarr_agent.providers.registry import build_providers
 from dyndnsarr_agent.scheduler import run_forever, utc_now
@@ -91,6 +95,7 @@ def create_app(
     ddns_config = load_ddns_config(settings.config_file) if settings.config_file else None
     if ddns_config is not None:
         require_provider_credentials(ddns_config, settings)
+        require_hub_token(ddns_config, settings)
     app.state.ddns_config = ddns_config
     app.state.ddns_observer = observer
     app.state.ddns_transport = transport
