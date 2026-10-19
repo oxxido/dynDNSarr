@@ -52,8 +52,8 @@ PY
 check agent DYNDNSARR_AGENT
 check hub DYNDNSARR_HUB
 
-# `status` falla si las migraciones (0002 y 0003: tablas del motor DDNS) no viajaron en el wheel
-# y lee las columnas de la 0003.
+# `status` falla si las migraciones (0002, 0003 y 0005: motor DDNS y control del Hub) no viajaron
+# en el wheel: lee las columnas de la 0003 y la tabla `configuration_versions` de la 0005.
 DYNDNSARR_AGENT_DATA_DIR="$work/data-agent" "$work/venv/bin/dyndnsarr-agent" status >/dev/null
 echo "OK: agent instalado desde wheel ejecuta 'dyndnsarr-agent status'"
 
@@ -64,6 +64,10 @@ echo "OK: agent instalado desde wheel importa dyndnsarr_agent.providers"
 "$work/venv/bin/python" -c 'import dyndnsarr_agent.outbox.client, dyndnsarr_agent.outbox.loop, dyndnsarr_hub.auth.tokens, dyndnsarr_hub.api.events'
 echo "OK: agent y hub instalados desde wheel importan outbox, auth y api.events"
 
-# `agent-list` falla si la migración 0002 del Hub no viajó en el wheel.
+# `commands` (Agent) y `services` (Hub) son paquetes del slice 3b, declarados a mano.
+"$work/venv/bin/python" -c 'import dyndnsarr_agent.commands.executor, dyndnsarr_agent.api.internal, dyndnsarr_agent.ddns.apply_config, dyndnsarr_hub.services.agent_client, dyndnsarr_hub.services.events_handlers'
+echo "OK: agent y hub instalados desde wheel importan commands y services"
+
+# `agent-list` falla si las migraciones 0002 y 0003 del Hub no viajaron en el wheel (lee `api_url`).
 DYNDNSARR_HUB_DATA_DIR="$work/data-hub" "$work/venv/bin/dyndnsarr-hub" agent-list >/dev/null
 echo "OK: hub instalado desde wheel ejecuta 'dyndnsarr-hub agent-list'"

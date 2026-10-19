@@ -1,6 +1,6 @@
 # Slice 3a — Enlace seguro y entrega de eventos (Agent → Hub)
 
-- **Estado:** en revisión
+- **Estado:** fusionado
 - **Fase (arquitectura):** 2, primera mitad ([architecture.md](../architecture.md) §3, §5 «Agent → Hub» y «At-least-once», §6, §11 «Pairing», §13 casos 6 y 7)
 - **Rama:** `slice/03a-enlace-seguro-eventos`
 - **PR:** [#4](https://github.com/oxxido/dynDNSarr/pull/4)

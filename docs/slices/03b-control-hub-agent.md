@@ -1,9 +1,9 @@
 # Slice 3b — Control Hub → Agent: estado, configuración versionada y comandos
 
-- **Estado:** planificado
+- **Estado:** en revisión
 - **Fase (arquitectura):** 2, segunda mitad ([architecture.md](../architecture.md) §3, §5 «Hub → Agent», «Comandos» y «Configuración», §6, §11, §13 casos 9 y comando duplicado)
 - **Rama:** `slice/03b-control-hub-agent`
-- **PR:** —
+- **PR:** [#5](https://github.com/oxxido/dynDNSarr/pull/5)
 
 ## Objetivo
 
@@ -31,6 +31,18 @@ Como el Hub aún no tiene UI ni login (slice 5), se opera por su CLI.
 - Los endpoints `config-ack` y `command-results` del §5: el ack y el resultado viajan como eventos (D3).
 - mTLS, limitación de tasa (la LAN y el firewall acotan el origen, §3), monitorización de caducidad del certificado.
 - Historial de cambios navegable o reversión a una versión concreta desde el Hub.
+
+## Ajustes tras 3a (paso 1)
+
+Comprobado contra `main` con 3a fusionada (PR #4). El plan sigue siendo válido; lo que cambia respecto a lo que suponía:
+
+- La ingestión del Hub no es un servicio: vive en `api/events.py` (`post_events`) y `events_repo.insert_events` ignoraba los duplicados sin decir cuáles. Pasa a devolver los eventos **nuevos**, que son los que recibe `services/events_handlers.py` en la misma transacción.
+- `build_ssl_context` y la detección de errores TLS salen de `outbox/client.py` a `dyndnsarr_shared/tls.py`: ahora los usan el Agent (hacia el Hub) y el Hub (hacia el Agent).
+- Migraciones: Agent 0004 → **0005**, Hub 0002 → **0003** (como estaba previsto). `EVENT_TYPES` de `ddns_repo` gana los cuatro tipos nuevos.
+- El Hub no monta la CA del Agent como volumen: un bind mount cuyo origen no existe lo crea Docker como directorio y rompería a quien aún no use 3b. La CA se copia al volumen `/data` (`/data/agent-ca.pem`, valor por defecto de `DYNDNSARR_HUB_AGENT_CA_FILE` en `compose.yaml`).
+- `DYNDNSARR_AGENT_API_TOKEN` sin `DYNDNSARR_AGENT_CONFIG_FILE` impide arrancar: la configuración remota se superpone sobre un TOML, y sin él no hay base.
+- El holder lleva también el `DnsObserver` (los `dns.resolvers` son administrables y el observador se construye con ellos).
+- `config-reset` solo toca la BD: el daemon en marcha conserva su configuración en memoria hasta reiniciarse (la CLI lo avisa).
 
 ## Decisiones previas
 
@@ -137,4 +149,28 @@ Commits pequeños, tests antes del código. Cada paso termina con `ruff` y `pyte
 
 ## Evidencia
 
-Comandos ejecutados, salidas relevantes, enlaces. Se rellena al implementar.
+Ejecutado el 2026-10-19 en la rama `slice/03b-control-hub-agent`.
+
+| Criterio | Evidencia |
+|---|---|
+| 1 | `ruff check .`, `ruff format --check .` y `pytest` (674 pruebas, 26 de ellas e2e): verde en Python 3.12.3 (`.venv`) y 3.11.17 (venv limpio creado desde los wheels, no editable). |
+| 2 | `tests/e2e/test_hub_control.py::test_config_flow_…` (procesos reales, Agent con TLS de `trustme`): config inválida → `rechazada (invalid_config)`, `status` sigue en `TOML local`, el daemon sigue ciclando igual y no consulta el registro nuevo; el Hub la ve rechazada por la respuesta (`config-show`) y por el evento `config_rejected`. Config válida → `aplicada`, `Configuración: versión 3`, el siguiente ciclo del daemon consulta los registros nuevos y llega `config_applied`. En proceso: `tests/integration/test_hub_agent_control.py`. |
+| 3 | Mismo e2e (misma versión → `aplicada` sin fila nueva; versión 1 con la 3 activa → `stale_version`; hash incorrecto → `hash_mismatch`; versión 3 con otro contenido → `version_conflict`) y `tests/integration/test_apply_config.py` (una prueba por fila de la tabla de D5). |
+| 4 | `test_apply_config.py::test_a_failure_before_commit_…`: fallo inyectado en el evento tras insertar la versión → ni fila nueva, ni evento, ni cambio en el holder; `load_active` sigue en 0. `test_the_running_cycle_keeps_its_configuration`: aplicar a mitad de un ciclo no lo afecta. |
+| 5 | `test_commands.py` (ejecutor con proveedor falso contado): mismo `command_id` dos veces → una ejecución y el mismo resultado; otro tipo → 409; caducado → `expired` sin ejecutar; `wake_device` y parámetros → 422 sin guardar; cola llena → 429; ejecución en serie; `busy` con `ddns.lock` tomado; tras reinicio `received`/`running` → `failed/interrupted` sin reejecutar. En proceso (`test_hub_agent_control.py`): una sola llamada a DonDominio con un `sync_ddns` duplicado. E2E: comando duplicado → una ejecución, caducado y `wake_device` no se ejecutan, y un comando `running` dejado por un «crash» queda `interrupted` y reenviar su id no lo reejecuta. |
+| 6 | `test_internal_api.py` y el e2e: sin cabecera, con token malo, con esquema distinto de Bearer → el mismo 401; el 401 va antes de leer el cuerpo; sin token no existe `/internal` (404); ningún `GET` modifica tablas; cuerpo > 256 KiB → 413 con y sin `Content-Length`. `test_agent_tls.py`: CA correcta conecta, sin CA o con otra falla el handshake, HTTP plano al puerto TLS no responde. `test_agent_control_settings.py` y e2e: token con `HOST=0.0.0.0` sin TLS → el Agent no arranca (mensaje `hace falta TLS`, sin el token). Secciones locales (`providers`, `hub`) → `forbidden_section` (API, CLI y e2e). |
+| 7 | Canarios: `test_internal_api.py` (token de API, token del Hub, clave de DonDominio y URL del Hub fuera de respuestas y logs, con las rutas de error incluidas), `test_commands.py` (texto de una excepción fuera de resultado, evento y log), `test_hub_control_cli.py` (token de la API fuera de toda salida del Hub; solo se imprime al emitirlo), `tests/unit/test_hub_control_repo.py` (el token no sale en el listado) y `test_hub_agent_client.py` (repr de la respuesta) y el e2e final (logs de ambos procesos y consolas sin token de API, token del Hub, clave y usuario de DonDominio ni su URL). |
+| 8 | E2E `test_the_agent_works_without_the_hub_…`: con el Hub caído el Agent arranca y cicla, `config-reset` + reinicio → `Configuración: TOML local`, al volver el Hub llega `config_reset`, el Hub ve versión 0 y `config-resend` lo vuelve a aplicar. En proceso: resultado de un comando con el Hub caído llega por evento al volver, una sola vez. |
+| 9 | `PYTHON=python3.11 scripts/verify-wheels.sh` en venv limpio: `/healthz` de ambos, `dyndnsarr-agent status` (lee `configuration_versions`, 0005), importa `commands`, `api.internal`, `apply_config`, `services.agent_client` y `services.events_handlers`, y `dyndnsarr-hub agent-list` (lee `api_url`, 0003). |
+| 10 | CI del PR #5 en verde (run 39211932001): `test (3.11)`, `test (3.12)` e `hub-image` (que ya ejecuta las comprobaciones nuevas de `verify-compose.sh` dentro de la imagen). |
+| 11 | **Pendiente del usuario** ([operaciones §7.5](../operations.md)). La receta de `openssl` de §7.1 sí se ejecutó aquí (CA → certificado con IP en el SAN → `openssl verify` → OK; y el módulo `ssl` de Python rechaza una IP que no está en el SAN). |
+
+Desviaciones respecto al plan (además de las de «Ajustes tras 3a»):
+
+- `ConfigHolder.replace` reconstruye proveedores y observador **antes** de asignar nada: si fallara, el holder queda como estaba.
+- `AgentHealth.agent_id`/`AgentStatus.agent_id` son `None` si el TOML no tiene `[hub]` (el Agent solo conoce su identidad por esa sección).
+- Un `check_dns` sin IP pública confirmada devuelve el veredicto `no_reference` (la CLI sigue imprimiendo «sin referencia»). Los resultados de comando que superan 3000 bytes viajan resumidos en el evento (el Hub rechaza payloads > 4 KiB); el resultado completo queda en `commands`.
+- Se añadió `command-show --refresh` (pregunta al Agent con `GET commands/{id}`); un 404 **no** marca el comando como fallido (el `POST` pudo quedar en vuelo), solo un rechazo explícito del `POST` lo hace. Lo encontró una prueba de la CLI.
+- `agent-list` del Hub muestra la URL de la API (no el token). El Hub necesita `httpx` en tiempo de ejecución (se añadió a sus dependencias).
+- El outbox entrega cada 30 s (3a): las pruebas e2e que esperan eventos tardan hasta ~60–90 s (`test_hub_control.py` ≈ 87 s).
+- `scripts/verify-compose.sh` ahora comprueba también `agent-set-api` y `agent-api-token` dentro de la imagen. **No se ejecutó en local** (requiere Docker, compartido con otros servicios del servidor, y los comandos que lo afectan los autoriza el usuario): lo ejecuta la CI (`hub-image`), que pasa.

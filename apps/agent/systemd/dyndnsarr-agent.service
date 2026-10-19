@@ -11,6 +11,8 @@ Group=dyndnsarr
 # agent.env (docs/operations.md §5). Con ProtectSystem=strict, /etc es de solo lectura: basta.
 # Las credenciales de DonDominio (registros managed) van también en agent.env (0600), nunca en
 # el TOML ni en este archivo.
+# La API de control del Hub (slice 3b) se activa con DYNDNSARR_AGENT_API_TOKEN, HOST (IP LAN) y los
+# archivos TLS en agent.env; los certificados viven en /etc/dyndnsarr (docs/operations.md §7).
 EnvironmentFile=/etc/dyndnsarr/agent.env
 ExecStart=/opt/dyndnsarr/venv/bin/dyndnsarr-agent
 Restart=always

@@ -1,17 +1,36 @@
 import argparse
+import asyncio
 import json
 import sqlite3
+import ssl
 import sys
-from collections.abc import Sequence
+import tomllib
+import uuid
+from collections.abc import Awaitable, Callable, Sequence
+from datetime import timedelta
+from pathlib import Path
 
+import httpx
 import uvicorn
 from pydantic import ValidationError
 
-from dyndnsarr_hub.auth.tokens import generate_token, hash_token
-from dyndnsarr_hub.clock import utc_now
+from dyndnsarr_hub.auth.tokens import generate_api_token, generate_token, hash_token
+from dyndnsarr_hub.clock import iso, utc_now
 from dyndnsarr_hub.config import Settings
-from dyndnsarr_hub.db import MIGRATIONS, agents_repo, events_repo
+from dyndnsarr_hub.db import MIGRATIONS, agents_repo, control_repo, events_repo
 from dyndnsarr_hub.main import create_app
+from dyndnsarr_hub.services.agent_client import (
+    AgentClient,
+    Reply,
+    build_http_client,
+    check_api_url,
+)
+from dyndnsarr_shared.control import (
+    CommandRequest,
+    CommandStatus,
+    ConfigPut,
+    canonical_json,
+)
 from dyndnsarr_shared.db import connect, migrate, transaction
 from dyndnsarr_shared.events import AGENT_ID_PATTERN, is_valid_agent_id
 from dyndnsarr_shared.logging import configure_logging
@@ -110,9 +129,10 @@ def _agent_list(settings: Settings, args: argparse.Namespace) -> int:
         print("(sin agentes)")
     for a in agents:
         state = "deshabilitado" if a.disabled else "activo"
+        api = (a.api_url or "sin configurar") + ("" if a.has_api_token else " (sin token)")
         print(
             f"{a.agent_id}  {state}  tokens vigentes: {a.active_tokens}  "
-            f"creado: {a.created_at}  visto: {a.last_seen_at or 'nunca'}"
+            f"creado: {a.created_at}  visto: {a.last_seen_at or 'nunca'}  api: {api}"
         )
     return 0
 
@@ -134,16 +154,367 @@ def _events(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+class CliError(Exception):
+    """Un error de uso o de entorno que se muestra tal cual y termina con código 1."""
+
+
+# --- control del Agent (slice 3b) ---
+
+
+def _api_target(conn: sqlite3.Connection, agent_id: str) -> tuple[str, str]:
+    try:
+        url, token = agents_repo.get_api_target(conn, agent_id)
+    except agents_repo.UnknownAgentError:
+        raise CliError(f"El agente {agent_id} no existe.") from None
+    if not url:
+        raise CliError(
+            f"Falta la URL de la API del Agent: dyndnsarr-hub agent-set-api {agent_id} <url>"
+        )
+    if not token:
+        raise CliError(f"Falta el token de la API: dyndnsarr-hub agent-api-token {agent_id}")
+    return url, token
+
+
+def _call_agent(
+    settings: Settings,
+    url: str,
+    token: str,
+    transport: httpx.AsyncBaseTransport | None,
+    action: Callable[[AgentClient], Awaitable[Reply]],
+) -> Reply:
+    """Una llamada al Agent con TLS verificado (solo la CA configurada o el almacén del sistema)."""
+
+    async def go() -> Reply:
+        async with build_http_client(settings.agent_ca_file, transport) as http:
+            return await action(AgentClient(http, url, token))
+
+    try:
+        return asyncio.run(go())
+    except (OSError, ssl.SSLError):
+        raise CliError(
+            "No se puede leer la CA de los Agents (DYNDNSARR_HUB_AGENT_CA_FILE); "
+            "ver docs/operations.md"
+        ) from None
+
+
+def _agent_set_api(settings: Settings, args: argparse.Namespace) -> int:
+    try:
+        url = check_api_url(args.url)
+    except ValueError as exc:
+        raise CliError(f"URL no válida: {exc}") from None
+    conn = _open_db(settings)
+    try:
+        with transaction(conn):
+            agents_repo.set_api_url(conn, args.agent_id, url)
+    except agents_repo.UnknownAgentError:
+        raise CliError(f"El agente {args.agent_id} no existe.") from None
+    finally:
+        conn.close()
+    print(f"API del Agent {args.agent_id}: {url}")
+    return 0
+
+
+def _agent_api_token(settings: Settings, args: argparse.Namespace) -> int:
+    token = generate_api_token()
+    conn = _open_db(settings)
+    try:
+        with transaction(conn):
+            agents_repo.set_api_token(conn, args.agent_id, token)
+    except agents_repo.UnknownAgentError:
+        raise CliError(f"El agente {args.agent_id} no existe.") from None
+    finally:
+        conn.close()
+    print(f"Agente: {args.agent_id}")
+    print("Token de la API del Agent (se muestra una sola vez):")
+    print(token)
+    print(
+        "Ponlo en DYNDNSARR_AGENT_API_TOKEN (agent.env) y reinicia el Agent; hasta entonces "
+        "el Agent responderá 401 al Hub."
+    )
+    return 0
+
+
+def _read_content(path: Path) -> dict:
+    try:
+        content = tomllib.loads(path.read_text(encoding="utf-8"))
+        canonical_json(content)
+    except OSError as exc:
+        raise CliError(f"No se puede leer {path}: {exc.strerror}") from None
+    except tomllib.TOMLDecodeError as exc:
+        raise CliError(f"{path}: TOML inválido: {exc}") from None
+    except TypeError:
+        raise CliError(
+            f"{path}: contiene valores que no se pueden enviar como JSON (¿fechas?)"
+        ) from None
+    return content
+
+
+def _send_config(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    desired: control_repo.DesiredVersion,
+    transport: httpx.AsyncBaseTransport | None,
+) -> int:
+    url, token = _api_target(conn, desired.agent_id)
+    put = ConfigPut(version=desired.version, hash=desired.content_hash, content=desired.content)
+    reply = _call_agent(settings, url, token, transport, lambda client: client.put_config(put))
+    if reply.value is None:
+        detail = reply.error_code or reply.api_error or "bad_response"
+        print(
+            f"No se pudo enviar la versión {desired.version} ({detail}): queda pendiente; "
+            f"reenvíala con config-resend {desired.agent_id}.",
+            file=sys.stderr,
+        )
+        return 1
+    result = reply.value
+    with transaction(conn):
+        control_repo.record_config_result(
+            conn,
+            desired.agent_id,
+            desired.version,
+            desired.content_hash,
+            result.result,
+            result.code,
+            utc_now(),
+        )
+    if result.result == "applied":
+        print(f"Versión {desired.version}: aplicada por el Agent.")
+        return 0
+    print(f"Versión {desired.version}: rechazada por el Agent ({result.code}).", file=sys.stderr)
+    if result.message_safe:
+        print(result.message_safe, file=sys.stderr)
+    return 1
+
+
+def _config_push(
+    settings: Settings, args: argparse.Namespace, transport: httpx.AsyncBaseTransport | None
+) -> int:
+    content = _read_content(args.file)
+    conn = _open_db(settings)
+    try:
+        _api_target(conn, args.agent_id)  # falla antes de crear nada si no se puede enviar
+        with transaction(conn):
+            desired = control_repo.add_desired_version(conn, args.agent_id, content, utc_now())
+        print(f"Versión {desired.version} creada (hash {desired.content_hash[:12]}).")
+        return _send_config(conn, settings, desired, transport)
+    finally:
+        conn.close()
+
+
+def _config_resend(
+    settings: Settings, args: argparse.Namespace, transport: httpx.AsyncBaseTransport | None
+) -> int:
+    conn = _open_db(settings)
+    try:
+        desired = control_repo.latest_desired(conn, args.agent_id)
+        if desired is None:
+            raise CliError(f"No hay ninguna versión creada para {args.agent_id}: usa config-push.")
+        return _send_config(conn, settings, desired, transport)
+    finally:
+        conn.close()
+
+
+def _config_show(settings: Settings, args: argparse.Namespace) -> int:
+    conn = _open_db(settings)
+    try:
+        desired = control_repo.latest_desired(conn, args.agent_id)
+        observed = control_repo.get_observed(conn, args.agent_id)
+    finally:
+        conn.close()
+    if desired is None:
+        print("Versión deseada: ninguna")
+    else:
+        print(
+            f"Versión deseada: {desired.version} (hash {desired.content_hash[:12]}, "
+            f"creada {desired.created_at})"
+        )
+    if observed is None or observed.config_version == 0:
+        print("Versión aplicada en el Agent: ninguna (manda su TOML)")
+    else:
+        print(
+            f"Versión aplicada en el Agent: {observed.config_version} "
+            f"(hash {(observed.config_hash or '')[:12]})"
+        )
+    if observed is not None and observed.last_attempt_version is not None:
+        code = f" ({observed.last_code})" if observed.last_code else ""
+        print(
+            f"Último intento: versión {observed.last_attempt_version} {observed.last_result}"
+            f"{code} el {observed.last_attempt_at}"
+        )
+    if desired is not None:
+        pending = observed is None or observed.config_version != desired.version
+        print("Estado: " + ("pendiente de aplicar" if pending else "aplicada"))
+        print("Contenido:")
+        print(json.dumps(desired.content, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def _agent_status(
+    settings: Settings, args: argparse.Namespace, transport: httpx.AsyncBaseTransport | None
+) -> int:
+    conn = _open_db(settings)
+    try:
+        url, token = _api_target(conn, args.agent_id)
+    finally:
+        conn.close()
+
+    async def both(client: AgentClient):
+        return await client.health(), await client.status()
+
+    health, status = _call_agent(settings, url, token, transport, both)
+    for reply in (health, status):
+        if reply.value is None:
+            detail = reply.error_code or reply.api_error or "bad_response"
+            print(f"No se pudo consultar al Agent ({detail}).", file=sys.stderr)
+            return 1
+    h, s = health.value, status.value
+    print(f"Agente {args.agent_id}: versión {h.version}, estado {h.status}, hora {h.time_utc}")
+    print(f"Última comprobación DNS local: {h.last_local_dns_check_at or 'nunca'}")
+    if s.config_version:
+        print(
+            f"Configuración activa: versión {s.config_version} (hash {(s.config_hash or '')[:12]})"
+        )
+    else:
+        print("Configuración activa: TOML local")
+    if s.ip_status is None:
+        print("IP pública: desconocida (sin observaciones)")
+    elif s.ip_status == "confirmed":
+        print(f"IP pública: {s.public_ip} (confirmada el {s.public_ip_confirmed_at})")
+    else:
+        print(f"IP pública: incierta (última confirmada: {s.public_ip or 'ninguna'})")
+    print("Registros:")
+    for r in s.records:
+        print(f"  {r.name}  {r.mode}  {r.verification}  desde {r.since or '-'}")
+    if not s.records:
+        print("  (ninguno)")
+    if s.hub is not None:
+        print(
+            f"Enlace con el Hub: {s.hub.pending_events} evento(s) pendiente(s), "
+            f"{s.hub.rejected_events} rechazado(s), último envío "
+            f"{s.hub.last_success_at or 'nunca'}"
+        )
+    return 0
+
+
+def _print_command(command: control_repo.HubCommand) -> None:
+    print(f"Comando {command.command_id}: {command.type} -> {command.status}")
+    print(
+        f"  pedido por {command.requested_by} el {command.created_at}, caduca {command.expires_at}"
+    )
+    if command.result is not None:
+        print(f"  resultado: {json.dumps(command.result, sort_keys=True)}")
+
+
+def _apply_command_reply(
+    conn: sqlite3.Connection, command_id: str, agent_id: str, reply: Reply[CommandStatus]
+) -> None:
+    """Refleja la respuesta del `POST`: el estado del Agent, o su rechazo explícito (el comando
+    nunca se ejecutará, así que `failed` es definitivo)."""
+    with transaction(conn):
+        if reply.value is not None:
+            control_repo.update_command_from_agent(
+                conn, command_id, agent_id, reply.value.status, reply.value.result
+            )
+        elif reply.api_error is not None:
+            control_repo.update_command_from_agent(
+                conn, command_id, agent_id, "failed", {"code": reply.api_error}
+            )
+
+
+def _command(
+    settings: Settings, args: argparse.Namespace, transport: httpx.AsyncBaseTransport | None
+) -> int:
+    now = utc_now()
+    try:
+        request = CommandRequest(
+            command_id=str(uuid.uuid4()),
+            type=args.type,
+            requested_by="admin:cli",
+            expires_at=iso(now + timedelta(seconds=args.ttl)),
+        )
+    except ValidationError:
+        raise CliError("Tipo de comando no válido.") from None
+    conn = _open_db(settings)
+    try:
+        url, token = _api_target(conn, args.agent_id)
+        with transaction(conn):
+            control_repo.create_command(
+                conn,
+                request.command_id,
+                args.agent_id,
+                request.type,
+                request.requested_by,
+                now,
+                request.expires_at,
+            )
+        print(f"Comando {request.command_id} creado.")
+        reply = _call_agent(
+            settings, url, token, transport, lambda client: client.post_command(request)
+        )
+        _apply_command_reply(conn, request.command_id, args.agent_id, reply)
+        if reply.value is None and reply.api_error is None:
+            print(
+                f"No se pudo enviar ({reply.error_code}): comprueba su estado con "
+                f"command-show --refresh {request.command_id}; si no llegó, pide otro comando.",
+                file=sys.stderr,
+            )
+            return 1
+        _print_command(control_repo.get_command(conn, request.command_id))
+        return 1 if reply.value is None else 0
+    finally:
+        conn.close()
+
+
+def _command_show(
+    settings: Settings, args: argparse.Namespace, transport: httpx.AsyncBaseTransport | None
+) -> int:
+    conn = _open_db(settings)
+    try:
+        command = control_repo.get_command(conn, args.command_id)
+        if command is None:
+            raise CliError(f"No existe el comando {args.command_id}.")
+        if args.refresh:
+            url, token = _api_target(conn, command.agent_id)
+            reply = _call_agent(
+                settings, url, token, transport, lambda client: client.command(args.command_id)
+            )
+            if reply.value is not None:
+                _apply_command_reply(conn, args.command_id, command.agent_id, reply)
+            elif reply.api_error == "not_found":
+                # No es definitivo: el POST pudo quedar en vuelo y el evento aún puede llegar.
+                print("El Agent no conoce ese comando (no llegó, o ya se purgó).", file=sys.stderr)
+            else:
+                detail = reply.error_code or reply.api_error or "bad_response"
+                print(f"No se pudo consultar al Agent ({detail}).", file=sys.stderr)
+            command = control_repo.get_command(conn, args.command_id)
+        _print_command(command)
+    finally:
+        conn.close()
+    return 0
+
+
 _COMMANDS = {
     "agent-add": _agent_add,
     "agent-rotate": _agent_rotate,
     "agent-revoke": _agent_revoke,
     "agent-list": _agent_list,
     "events": _events,
+    "agent-set-api": _agent_set_api,
+    "agent-api-token": _agent_api_token,
+    "config-show": _config_show,
+}
+
+# Los que llaman al Agent reciben además el transporte (solo pruebas).
+_NETWORK_COMMANDS = {
+    "config-push": _config_push,
+    "config-resend": _config_resend,
+    "agent-status": _agent_status,
+    "command": _command,
+    "command-show": _command_show,
 }
 
 
-def run(argv: Sequence[str]) -> int:
+def run(argv: Sequence[str], transport: httpx.AsyncBaseTransport | None = None) -> int:
     parser = argparse.ArgumentParser(prog="dyndnsarr-hub")
     sub = parser.add_subparsers(dest="command", metavar="comando")
     sub.add_parser("serve", help="sirve el Hub (por defecto, sin comando)")
@@ -160,11 +531,41 @@ def run(argv: Sequence[str]) -> int:
     events = sub.add_parser("events", help="muestra los últimos eventos recibidos")
     events.add_argument("--agent", help="solo los de este agent_id")
     events.add_argument("--limit", type=int, default=20)
+    set_api = sub.add_parser("agent-set-api", help="guarda la URL de la API de control del Agent")
+    set_api.add_argument("agent_id")
+    set_api.add_argument("url")
+    api_token = sub.add_parser(
+        "agent-api-token", help="emite el token con el que el Hub llama a ese Agent"
+    )
+    api_token.add_argument("agent_id")
+    push = sub.add_parser("config-push", help="crea la versión siguiente desde un TOML y la envía")
+    push.add_argument("agent_id")
+    push.add_argument("file", type=Path)
+    resend = sub.add_parser("config-resend", help="reenvía la última versión creada")
+    resend.add_argument("agent_id")
+    show = sub.add_parser("config-show", help="muestra la versión deseada y la aplicada")
+    show.add_argument("agent_id")
+    status = sub.add_parser("agent-status", help="consulta health y status al Agent")
+    status.add_argument("agent_id")
+    command = sub.add_parser("command", help="pide un comando al Agent (check_dns, sync_ddns)")
+    command.add_argument("agent_id")
+    command.add_argument("type")
+    command.add_argument("--ttl", type=int, default=300, help="segundos de validez (300)")
+    shown = sub.add_parser("command-show", help="muestra el estado de un comando")
+    shown.add_argument("command_id")
+    shown.add_argument("--refresh", action="store_true", help="pregunta antes al Agent")
     args = parser.parse_args(argv)
     if args.command in (None, "serve"):
         serve()
         return 0
-    return _COMMANDS[args.command](_load_settings(), args)
+    try:
+        settings = _load_settings()
+        if args.command in _NETWORK_COMMANDS:
+            return _NETWORK_COMMANDS[args.command](settings, args, transport)
+        return _COMMANDS[args.command](settings, args)
+    except CliError as exc:
+        print(exc, file=sys.stderr)
+        return 1
 
 
 def cli() -> None:

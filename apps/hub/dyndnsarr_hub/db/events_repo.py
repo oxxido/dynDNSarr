@@ -22,13 +22,17 @@ class StoredEvent:
 
 def insert_events(
     conn: sqlite3.Connection, events: list[AgentEvent], received_at: datetime
-) -> None:
-    """Guarda los eventos; uno ya recibido `(agent_id, event_id)` se ignora (reenvío)."""
-    conn.executemany(
-        "INSERT OR IGNORE INTO events "
-        "(agent_id, event_id, sequence, type, occurred_at, received_at, record_name, payload) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [
+) -> list[AgentEvent]:
+    """Guarda los eventos; uno ya recibido `(agent_id, event_id)` se ignora (reenvío).
+
+    Devuelve los que eran nuevos.
+    """
+    new = []
+    for e in events:
+        cursor = conn.execute(
+            "INSERT OR IGNORE INTO events "
+            "(agent_id, event_id, sequence, type, occurred_at, received_at, record_name, payload) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 e.agent_id,
                 e.event_id,
@@ -38,10 +42,11 @@ def insert_events(
                 iso(received_at),
                 e.record_name,
                 json.dumps(e.payload, sort_keys=True),
-            )
-            for e in events
-        ],
-    )
+            ),
+        )
+        if cursor.rowcount == 1:
+            new.append(e)
+    return new
 
 
 def list_events(

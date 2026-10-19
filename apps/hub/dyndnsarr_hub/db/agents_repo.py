@@ -20,6 +20,8 @@ class AgentRow:
     last_seen_at: str | None
     disabled: bool
     active_tokens: int
+    api_url: str | None
+    has_api_token: bool
 
 
 def create_agent(conn: sqlite3.Connection, agent_id: str, token_hash: str, now: datetime) -> None:
@@ -91,7 +93,33 @@ def list_agents(conn: sqlite3.Connection) -> list[AgentRow]:
     rows = conn.execute(
         "SELECT a.agent_id, a.created_at, a.last_seen_at, a.disabled, "
         "(SELECT count(*) FROM agent_credentials c "
-        " WHERE c.agent_id = a.agent_id AND c.revoked_at IS NULL) "
+        " WHERE c.agent_id = a.agent_id AND c.revoked_at IS NULL), "
+        "a.api_url, a.api_token IS NOT NULL "
         "FROM agents a ORDER BY a.agent_id"
     ).fetchall()
-    return [AgentRow(r[0], r[1], r[2], bool(r[3]), r[4]) for r in rows]
+    return [AgentRow(r[0], r[1], r[2], bool(r[3]), r[4], r[5], bool(r[6])) for r in rows]
+
+
+def set_api_url(conn: sqlite3.Connection, agent_id: str, api_url: str) -> None:
+    cursor = conn.execute("UPDATE agents SET api_url = ? WHERE agent_id = ?", (api_url, agent_id))
+    if cursor.rowcount == 0:
+        raise UnknownAgentError(agent_id)
+
+
+def set_api_token(conn: sqlite3.Connection, agent_id: str, api_token: str) -> None:
+    """Guarda el token con el que el Hub llama al Agent (en claro: ver ADR-0006)."""
+    cursor = conn.execute(
+        "UPDATE agents SET api_token = ? WHERE agent_id = ?", (api_token, agent_id)
+    )
+    if cursor.rowcount == 0:
+        raise UnknownAgentError(agent_id)
+
+
+def get_api_target(conn: sqlite3.Connection, agent_id: str) -> tuple[str | None, str | None]:
+    """`(api_url, api_token)` del agente; `UnknownAgentError` si no existe."""
+    row = conn.execute(
+        "SELECT api_url, api_token FROM agents WHERE agent_id = ?", (agent_id,)
+    ).fetchone()
+    if row is None:
+        raise UnknownAgentError(agent_id)
+    return row[0], row[1]

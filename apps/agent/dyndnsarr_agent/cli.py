@@ -9,18 +9,20 @@ import uvicorn
 from pydantic import ValidationError
 
 from dyndnsarr_agent.config import Settings
-from dyndnsarr_agent.db import MIGRATIONS, ddns_repo
+from dyndnsarr_agent.db import MIGRATIONS, control_repo, ddns_repo
+from dyndnsarr_agent.ddns import manual
+from dyndnsarr_agent.ddns.active_config import load_active
 from dyndnsarr_agent.ddns.config import (
     ConfigError,
     DdnsConfig,
     load_ddns_config,
     require_provider_credentials,
 )
-from dyndnsarr_agent.ddns.cycle import classify, record_dns_samples, record_ip_samples, run_cycle
+from dyndnsarr_agent.ddns.cycle import record_ip_samples
 from dyndnsarr_agent.ddns.ip_sources import detect_public_ip
 from dyndnsarr_agent.dns.resolver import DnsObserver, DnspythonObserver
 from dyndnsarr_agent.logging_setup import setup_logging
-from dyndnsarr_agent.main import create_app
+from dyndnsarr_agent.main import create_app, server_options
 from dyndnsarr_agent.providers.registry import build_providers
 from dyndnsarr_agent.scheduler import try_lock, utc_now
 from dyndnsarr_shared.db import connect, migrate, transaction
@@ -32,8 +34,11 @@ def _load_settings() -> Settings:
     except ValidationError as exc:
         # Sin el valor recibido: a futuro la configuración puede incluir secretos.
         prefix = Settings.model_config["env_prefix"]
+        # Un error de la validación cruzada (sin campo) ya nombra las variables en su mensaje.
         problems = "\n".join(
             f"  {prefix}{'_'.join(map(str, e['loc'])).upper()}: {e['msg']}"
+            if e["loc"]
+            else f"  {e['msg']}"
             for e in exc.errors(include_input=False)
         )
         sys.exit(f"Configuración inválida:\n{problems}")
@@ -47,7 +52,7 @@ def serve() -> None:
         app = create_app(settings)
     except ConfigError as exc:
         sys.exit(str(exc))
-    uvicorn.run(app, host=settings.host, port=settings.port, log_config=None)
+    uvicorn.run(app, **server_options(settings))
 
 
 def _hub_configured(settings: Settings) -> bool:
@@ -83,6 +88,7 @@ def _status(settings: Settings, **_: object) -> int:
         last_delivery = ddns_repo.get_state(conn, "outbox_last_success_at")
         last_error = ddns_repo.get_state(conn, "outbox_last_error_code")
         last_error_at = ddns_repo.get_state(conn, "outbox_last_error_at")
+        version = control_repo.latest_version(conn)
     except sqlite3.OperationalError:
         print(
             "La base de datos no tiene datos del motor DDNS: arranca el Agent una vez.",
@@ -92,6 +98,10 @@ def _status(settings: Settings, **_: object) -> int:
     finally:
         conn.close()
     print(f"Base de datos: {settings.db_path}")
+    if version is None:
+        print("Configuración: TOML local")
+    else:
+        print(f"Configuración: versión {version.version} (hash {version.content_hash[:12]})")
     print(f"Última comprobación: {last_check or 'nunca'}")
     if ip_status is None:
         print("IP pública: desconocida (sin observaciones)")
@@ -139,7 +149,7 @@ def _load_ddns(settings: Settings) -> DdnsConfig | None:
         )
         return None
     try:
-        return load_ddns_config(settings.config_file)
+        return load_active(settings).config
     except ConfigError as exc:
         print(exc, file=sys.stderr)
         return None
@@ -183,25 +193,15 @@ def _check_dns(settings: Settings, observer: DnsObserver | None = None, **_: obj
     if config is None:
         return 1
     observer = observer or DnspythonObserver(config.dns.resolvers)
-    names = [r.name for r in config.records if r.enabled]
-
-    async def go():
-        return await asyncio.gather(*(observer.lookup(n) for n in names))
-
-    all_answers = asyncio.run(go())
     conn = _open_db(settings)
     try:
-        known_ip = ddns_repo.get_state(conn, "public_ip")
-        with transaction(conn):
-            for name, answers in zip(names, all_answers, strict=True):
-                record_dns_samples(conn, utc_now(), name, answers)
+        check = asyncio.run(manual.check_dns(conn, config, observer, utc_now))
     finally:
         conn.close()
-    print(f"IP pública de referencia: {known_ip or 'desconocida'} (última confirmada)")
-    for name, answers in zip(names, all_answers, strict=True):
-        verdict = classify(known_ip, answers) if known_ip else "sin referencia"
-        print(f"{name}  {verdict}")
-        for a in answers:
+    print(f"IP pública de referencia: {check.known_ip or 'desconocida'} (última confirmada)")
+    for record in check.records:
+        print(f"{record.name}  {record.verdict or 'sin referencia'}")
+        for a in record.answers:
             print(f"  {a.resolver}  {','.join(a.ips) or 'error: ' + str(a.error_code)}")
     return 0
 
@@ -227,17 +227,15 @@ def _sync_ddns(
     except ConfigError as exc:
         print(exc, file=sys.stderr)
         return 1
-    managed = [r for r in config.records if r.mode == "managed" and r.enabled]
-    if not managed:
+    if not manual.managed_records(config):
         print("No hay registros managed habilitados: nada que sincronizar.")
         return 0
-    config = config.model_copy(update={"records": managed})
     observer = observer or DnspythonObserver(config.dns.resolvers)
 
     async def go():
         async with httpx.AsyncClient(transport=transport) as client:
             providers = build_providers(config, settings, client)
-            return await run_cycle(conn, config, client, observer, utc_now, providers, manual=True)
+            return await manual.sync_pass(conn, config, client, observer, providers, utc_now)
 
     conn = _open_db(settings)
     try:
@@ -271,11 +269,32 @@ def _sync_ddns(
     return 1 if failed else 0
 
 
+def _config_reset(settings: Settings, **_: object) -> int:
+    """Borra las versiones remotas: al reiniciar, el Agent vuelve a la configuración del TOML."""
+    conn = _open_db(settings)
+    try:
+        with transaction(conn):
+            previous = control_repo.latest_version(conn)
+            if previous is None:
+                print("No hay configuración remota: ya manda el TOML.")
+                return 0
+            control_repo.delete_versions(conn)
+            ddns_repo.insert_event(
+                conn, "config_reset", utc_now(), None, {"previous_version": previous.version}
+            )
+    finally:
+        conn.close()
+    print(f"Configuración remota (versión {previous.version}) borrada.")
+    print("Reinicia el Agent para que use la configuración del TOML.")
+    return 0
+
+
 _COMMANDS = {
     "status": _status,
     "check-ip": _check_ip,
     "check-dns": _check_dns,
     "sync-ddns": _sync_ddns,
+    "config-reset": _config_reset,
 }
 
 
@@ -296,6 +315,7 @@ def run(
         "sync-ddns",
         help="actualiza ahora los registros managed (ignora la espera de backoff)",
     )
+    sub.add_parser("config-reset", help="descarta la configuración remota del Hub y vuelve al TOML")
     args = parser.parse_args(argv)
     if args.command in (None, "serve"):
         serve()

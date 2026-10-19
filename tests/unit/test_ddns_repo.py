@@ -27,7 +27,7 @@ def test_migration_0002_applies_over_the_slice1_database(tmp_path):
         "updated_at TEXT NOT NULL); INSERT INTO app_state VALUES ('boot_count', '4', 'x'); "
         "PRAGMA user_version = 1; COMMIT;"
     )
-    assert migrate(old, MIGRATIONS) == 4
+    assert migrate(old, MIGRATIONS) == 5
     tables = {r[0] for r in old.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"public_ip_observations", "dns_checks", "record_state", "events"} <= tables
     assert old.execute("SELECT value FROM app_state WHERE key = 'boot_count'").fetchone() == ("4",)
@@ -109,6 +109,7 @@ def test_purge_removes_only_what_is_older_than_the_limit(conn):
         "dns_checks": 1,
         "events": 0,
         "dns_update_attempts": 0,
+        "commands": 0,
     }
     assert conn.execute("SELECT observed_at FROM public_ip_observations").fetchall() == [
         (ddns_repo.iso(recent),)
@@ -148,7 +149,7 @@ def test_migration_0003_keeps_record_state_of_a_0002_database(tmp_path):
     old.execute(
         "INSERT INTO record_state VALUES ('b.example.com', 'verified', '2026-10-14T13:00:00Z')"
     )
-    assert migrate(old, MIGRATIONS) == 4
+    assert migrate(old, MIGRATIONS) == 5
     assert ddns_repo.list_record_states(old) == [
         ddns_repo.RecordState("a.example.com", "mismatch", "2026-10-14T12:00:00Z"),
         ddns_repo.RecordState("b.example.com", "verified", "2026-10-14T13:00:00Z"),
@@ -225,7 +226,7 @@ def test_migration_0004_leaves_existing_events_pending(tmp_path):
         old.executescript(f"BEGIN;\n{sql}\nPRAGMA user_version = {version};\nCOMMIT;")
     ddns_repo.insert_event(old, "agent_started", NOW, None, {"version": "x"})
     ddns_repo.insert_event(old, "ip_changed", NOW, None, {"ip": "1.2.3.4"})
-    assert migrate(old, MIGRATIONS) == 4
+    assert migrate(old, MIGRATIONS) == 5
     assert [e.type for e in ddns_repo.pending_events(old, 10)] == ["agent_started", "ip_changed"]
     assert ddns_repo.count_pending(old) == 2 and ddns_repo.count_rejected(old) == 0
 

@@ -3,26 +3,32 @@ import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import httpx
 from fastapi import FastAPI
 
 from dyndnsarr_agent import __version__
 from dyndnsarr_agent.api.health import router as health_router
+from dyndnsarr_agent.api.internal import router as internal_router
+from dyndnsarr_agent.commands.executor import CommandExecutor
 from dyndnsarr_agent.config import Settings
 from dyndnsarr_agent.db import MIGRATIONS, ddns_repo
 from dyndnsarr_agent.db.state import record_boot
+from dyndnsarr_agent.ddns.active_config import RESET_HINT, ActiveConfig, ConfigHolder, load_active
 from dyndnsarr_agent.ddns.config import (
-    load_ddns_config,
+    ConfigError,
+    DdnsConfig,
     require_hub_token,
     require_provider_credentials,
 )
 from dyndnsarr_agent.dns.resolver import DnsObserver, DnspythonObserver
-from dyndnsarr_agent.outbox.client import HttpHubClient, build_ssl_context
+from dyndnsarr_agent.outbox.client import HttpHubClient
 from dyndnsarr_agent.outbox.loop import run_forever as outbox_run_forever
 from dyndnsarr_agent.providers.registry import build_providers
 from dyndnsarr_agent.scheduler import run_forever, utc_now
 from dyndnsarr_shared.db import connect, migrate
+from dyndnsarr_shared.tls import build_ssl_context
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +53,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 "boot_count": boot_count,
             },
         )
-        ddns_config = app.state.ddns_config
-        if ddns_config is None:
+        active: ActiveConfig | None = app.state.active
+        if active is None:
             logger.info("ddns_engine_disabled")
             yield
             return
+        ddns_config = active.config
         ddns_repo.insert_event(
             conn,
             "agent_started",
@@ -59,25 +66,40 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             None,
             {"version": __version__, "boot_count": boot_count},
         )
-        observer = app.state.ddns_observer or DnspythonObserver(ddns_config.dns.resolvers)
         async with contextlib.AsyncExitStack() as stack:
             # TLS verificado (valor por defecto de httpx); `transport` solo se inyecta en pruebas.
             client = await stack.enter_async_context(
                 httpx.AsyncClient(transport=app.state.ddns_transport)
             )
+
+            def rebuild(config: DdnsConfig):
+                # Proveedores y observador de una configuración; el observador inyectado (pruebas)
+                # se conserva.
+                observer = app.state.ddns_observer or DnspythonObserver(config.dns.resolvers)
+                return build_providers(config, settings, client), observer
+
+            providers, observer = rebuild(ddns_config)
+            holder = ConfigHolder(
+                ddns_config,
+                providers,
+                observer,
+                base_raw=active.base_raw,
+                version=active.version,
+                content_hash=active.content_hash,
+                rebuild=rebuild,
+            )
+            app.state.holder = holder
+            executor = None
+            if settings.api_enabled:
+                executor = CommandExecutor(conn, holder, client, settings.lock_path)
+                executor.recover()
+                app.state.executor = executor
             tasks = [
-                asyncio.create_task(
-                    run_forever(
-                        conn,
-                        ddns_config,
-                        client,
-                        observer,
-                        providers=build_providers(ddns_config, settings, client),
-                        lock_path=settings.lock_path,
-                    )
-                )
+                asyncio.create_task(run_forever(conn, holder, client, lock_path=settings.lock_path))
             ]
             app.state.ddns_task = tasks[0]
+            if executor is not None:
+                tasks.append(asyncio.create_task(executor.run()))
             hub = ddns_config.hub
             if hub is not None:
                 # Cliente y conexión propios: la entrega no comparte nada con el ciclo DDNS.
@@ -103,6 +125,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         conn.close()
 
 
+def server_options(settings: Settings) -> dict[str, Any]:
+    """Opciones de `uvicorn.run`: con TLS configurado sirve HTTPS (también `/healthz`)."""
+    options: dict[str, Any] = {"host": settings.host, "port": settings.port, "log_config": None}
+    if settings.tls_enabled:
+        options["ssl_certfile"] = str(settings.tls_cert_file)
+        options["ssl_keyfile"] = str(settings.tls_key_file)
+    return options
+
+
 def create_app(
     settings: Settings,
     observer: DnsObserver | None = None,
@@ -115,15 +146,33 @@ def create_app(
     """
     app = FastAPI(title="DynDNSarr Agent", version=__version__, lifespan=lifespan)
     app.state.settings = settings
-    ddns_config = load_ddns_config(settings.config_file) if settings.config_file else None
-    if ddns_config is not None:
-        require_provider_credentials(ddns_config, settings)
-        require_hub_token(ddns_config, settings)
-    app.state.ddns_config = ddns_config
+    active = load_active(settings) if settings.config_file else None
+    if active is not None:
+        try:
+            require_provider_credentials(active.config, settings)
+        except ConfigError as exc:
+            if active.version:
+                raise ConfigError(
+                    f"{exc}\nLa versión activa {active.version} lo exige: {RESET_HINT}"
+                ) from None
+            raise
+        require_hub_token(active.config, settings)
+    if settings.api_enabled and active is None:
+        prefix = Settings.model_config["env_prefix"]
+        raise ConfigError(
+            f"{prefix}API_TOKEN necesita {prefix}CONFIG_FILE: la configuración remota se "
+            "superpone sobre el TOML local"
+        )
+    app.state.active = active
+    app.state.ddns_config = active.config if active else None
+    app.state.holder = None
+    app.state.executor = None
     app.state.ddns_observer = observer
     app.state.ddns_transport = transport
     app.state.ddns_task = None
     app.state.hub_transport = hub_transport
     app.state.outbox_task = None
     app.include_router(health_router)
+    if settings.api_enabled:
+        app.include_router(internal_router)
     return app

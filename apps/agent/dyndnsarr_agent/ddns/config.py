@@ -2,7 +2,7 @@ import ipaddress
 import re
 import tomllib
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -227,20 +227,33 @@ def require_hub_token(config: DdnsConfig, settings: Settings) -> None:
         raise ConfigError(f"hay una sección [hub] y falta el token: {variable}")
 
 
-def load_ddns_config(path: Path) -> DdnsConfig:
-    """Lee y valida el TOML del motor DDNS. Lanza `ConfigError` con un mensaje legible."""
+def read_toml(path: Path) -> dict[str, Any]:
+    """Lee el TOML del motor DDNS sin validarlo. Lanza `ConfigError` con un mensaje legible."""
     try:
-        raw = tomllib.loads(path.read_text(encoding="utf-8"))
+        return tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise ConfigError(f"el archivo de configuración no existe: {path}") from None
     except OSError as exc:
         raise ConfigError(f"no se puede leer {path}: {exc.strerror}") from None
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"{path}: TOML inválido: {exc}") from None
+
+
+def describe_errors(exc: ValidationError) -> str:
+    """Una línea `ruta: motivo` por problema, sin los valores recibidos."""
+    return "\n".join(
+        f"  {'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors(include_input=False)
+    )
+
+
+def validate_ddns_config(raw: dict[str, Any], source: str) -> DdnsConfig:
+    """Valida un documento ya leído. `source` solo da contexto al mensaje de error."""
     try:
         return DdnsConfig.model_validate(raw)
     except ValidationError as exc:
-        problems = "\n".join(
-            f"  {'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors(include_input=False)
-        )
-        raise ConfigError(f"{path}: configuración inválida:\n{problems}") from None
+        raise ConfigError(f"{source}: configuración inválida:\n{describe_errors(exc)}") from None
+
+
+def load_ddns_config(path: Path) -> DdnsConfig:
+    """Lee y valida el TOML del motor DDNS. Lanza `ConfigError` con un mensaje legible."""
+    return validate_ddns_config(read_toml(path), str(path))

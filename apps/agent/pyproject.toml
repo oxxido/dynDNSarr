@@ -23,6 +23,7 @@ build-backend = "setuptools.build_meta"
 packages = [
     "dyndnsarr_agent",
     "dyndnsarr_agent.api",
+    "dyndnsarr_agent.commands",
     "dyndnsarr_agent.db",
     "dyndnsarr_agent.ddns",
     "dyndnsarr_agent.dns",

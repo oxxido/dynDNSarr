@@ -297,3 +297,74 @@ def tls_hub(tmp_path):
     hub = TlsHub(tmp_path)
     yield hub
     hub.close()
+
+
+class TlsAgent:
+    """Un Agent real (`create_app` con API de control) servido con las opciones de `serve()`
+    y TLS de una CA de `trustme`. `other_ca_file` es una CA que no firmó su certificado."""
+
+    def __init__(self, tmp_path) -> None:
+        import httpx
+
+        from dyndnsarr_agent.config import Settings
+        from dyndnsarr_agent.dns.resolver import ResolverAnswer
+        from dyndnsarr_agent.main import create_app, server_options
+
+        self.token = "ddh_tls-test-token-0123456789"
+        ca, other = trustme.CA(), trustme.CA()
+        cert = ca.issue_cert("127.0.0.1", "localhost")
+        self.ca_file = tmp_path / "agent-ca.pem"
+        self.other_ca_file = tmp_path / "other-ca.pem"
+        key_file, cert_file = tmp_path / "agent-key.pem", tmp_path / "agent-cert.pem"
+        ca.cert_pem.write_to_path(self.ca_file)
+        other.cert_pem.write_to_path(self.other_ca_file)
+        cert.private_key_pem.write_to_path(key_file)
+        cert.cert_chain_pems[0].write_to_path(cert_file)
+
+        toml = tmp_path / "agent.toml"
+        toml.write_text(
+            '[ip_sources]\nurls = ["https://a.example/ip", "https://b.example/ip"]\n'
+            '[dns]\nresolvers = ["1.1.1.1"]\n'
+            '[[records]]\nname = "home.example.com"\nmode = "monitored"\n'
+        )
+        self.settings = Settings(
+            data_dir=tmp_path / "agent-data",
+            config_file=toml,
+            api_token=self.token,
+            tls_cert_file=cert_file,
+            tls_key_file=key_file,
+        )
+
+        class Observer:
+            async def lookup(self, name):
+                return [ResolverAnswer("1.1.1.1", ("1.2.3.4",), None)]
+
+        self.app = create_app(
+            self.settings,
+            observer=Observer(),
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, text="1.2.3.4")),
+        )
+        config = uvicorn.Config(self.app, **{**server_options(self.settings), "port": 0})
+        self._server = uvicorn.Server(config)
+        self._thread = threading.Thread(target=self._server.run, daemon=True)
+        self._thread.start()
+        deadline = time.monotonic() + 10
+        while not self._server.started:
+            assert time.monotonic() < deadline, "el Agent TLS de pruebas no arrancó"
+            time.sleep(0.02)
+        self.port = self._server.servers[0].sockets[0].getsockname()[1]
+
+    @property
+    def url(self) -> str:
+        return f"https://127.0.0.1:{self.port}"
+
+    def close(self) -> None:
+        self._server.should_exit = True
+        self._thread.join(timeout=10)
+
+
+@pytest.fixture
+def tls_agent(tmp_path):
+    agent = TlsAgent(tmp_path)
+    yield agent
+    agent.close()

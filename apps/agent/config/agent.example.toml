@@ -23,6 +23,10 @@ events_days = 365
 verify_retry_seconds = 60       # mínimo 1
 verify_timeout_seconds = 900    # no menor que verify_retry_seconds
 
+# Con la API de control (slice 3b, docs/operations.md §7) el Hub puede sustituir las secciones
+# check_interval_seconds, ip_sources, dns, retention, update y records de este archivo.
+# [providers] y [hub] son siempre locales. `dyndnsarr-agent config-reset` vuelve a este TOML.
+
 # Entrega de eventos al Hub (slice 3a, docs/operations.md §6). Opcional: sin esta sección no hay
 # entrega. El token del agente va en DYNDNSARR_AGENT_HUB_TOKEN (agent.env), nunca aquí. Con esta
 # sección y sin token el Agent no arranca; un Hub inaccesible nunca impide arrancar.
