@@ -1,6 +1,6 @@
 # Slice 3b — Control Hub → Agent: estado, configuración versionada y comandos
 
-- **Estado:** planificado
+- **Estado:** en implementación
 - **Fase (arquitectura):** 2, segunda mitad ([architecture.md](../architecture.md) §3, §5 «Hub → Agent», «Comandos» y «Configuración», §6, §11, §13 casos 9 y comando duplicado)
 - **Rama:** `slice/03b-control-hub-agent`
 - **PR:** —
@@ -31,6 +31,18 @@ Como el Hub aún no tiene UI ni login (slice 5), se opera por su CLI.
 - Los endpoints `config-ack` y `command-results` del §5: el ack y el resultado viajan como eventos (D3).
 - mTLS, limitación de tasa (la LAN y el firewall acotan el origen, §3), monitorización de caducidad del certificado.
 - Historial de cambios navegable o reversión a una versión concreta desde el Hub.
+
+## Ajustes tras 3a (paso 1)
+
+Comprobado contra `main` con 3a fusionada (PR #4). El plan sigue siendo válido; lo que cambia respecto a lo que suponía:
+
+- La ingestión del Hub no es un servicio: vive en `api/events.py` (`post_events`) y `events_repo.insert_events` ignoraba los duplicados sin decir cuáles. Pasa a devolver los eventos **nuevos**, que son los que recibe `services/events_handlers.py` en la misma transacción.
+- `build_ssl_context` y la detección de errores TLS salen de `outbox/client.py` a `dyndnsarr_shared/tls.py`: ahora los usan el Agent (hacia el Hub) y el Hub (hacia el Agent).
+- Migraciones: Agent 0004 → **0005**, Hub 0002 → **0003** (como estaba previsto). `EVENT_TYPES` de `ddns_repo` gana los cuatro tipos nuevos.
+- El Hub no monta la CA del Agent como volumen: un bind mount cuyo origen no existe lo crea Docker como directorio y rompería a quien aún no use 3b. La CA se copia al volumen `/data` (`/data/agent-ca.pem`, valor por defecto de `DYNDNSARR_HUB_AGENT_CA_FILE` en `compose.yaml`).
+- `DYNDNSARR_AGENT_API_TOKEN` sin `DYNDNSARR_AGENT_CONFIG_FILE` impide arrancar: la configuración remota se superpone sobre un TOML, y sin él no hay base.
+- El holder lleva también el `DnsObserver` (los `dns.resolvers` son administrables y el observador se construye con ellos).
+- `config-reset` solo toca la BD: el daemon en marcha conserva su configuración en memoria hasta reiniciarse (la CLI lo avisa).
 
 ## Decisiones previas
 
