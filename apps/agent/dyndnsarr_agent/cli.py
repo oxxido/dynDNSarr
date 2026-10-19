@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from dyndnsarr_agent.config import Settings
 from dyndnsarr_agent.db import MIGRATIONS, control_repo, ddns_repo
+from dyndnsarr_agent.ddns import manual
 from dyndnsarr_agent.ddns.active_config import load_active
 from dyndnsarr_agent.ddns.config import (
     ConfigError,
@@ -17,7 +18,7 @@ from dyndnsarr_agent.ddns.config import (
     load_ddns_config,
     require_provider_credentials,
 )
-from dyndnsarr_agent.ddns.cycle import classify, record_dns_samples, record_ip_samples, run_cycle
+from dyndnsarr_agent.ddns.cycle import record_ip_samples
 from dyndnsarr_agent.ddns.ip_sources import detect_public_ip
 from dyndnsarr_agent.dns.resolver import DnsObserver, DnspythonObserver
 from dyndnsarr_agent.logging_setup import setup_logging
@@ -192,25 +193,15 @@ def _check_dns(settings: Settings, observer: DnsObserver | None = None, **_: obj
     if config is None:
         return 1
     observer = observer or DnspythonObserver(config.dns.resolvers)
-    names = [r.name for r in config.records if r.enabled]
-
-    async def go():
-        return await asyncio.gather(*(observer.lookup(n) for n in names))
-
-    all_answers = asyncio.run(go())
     conn = _open_db(settings)
     try:
-        known_ip = ddns_repo.get_state(conn, "public_ip")
-        with transaction(conn):
-            for name, answers in zip(names, all_answers, strict=True):
-                record_dns_samples(conn, utc_now(), name, answers)
+        check = asyncio.run(manual.check_dns(conn, config, observer, utc_now))
     finally:
         conn.close()
-    print(f"IP pública de referencia: {known_ip or 'desconocida'} (última confirmada)")
-    for name, answers in zip(names, all_answers, strict=True):
-        verdict = classify(known_ip, answers) if known_ip else "sin referencia"
-        print(f"{name}  {verdict}")
-        for a in answers:
+    print(f"IP pública de referencia: {check.known_ip or 'desconocida'} (última confirmada)")
+    for record in check.records:
+        print(f"{record.name}  {record.verdict or 'sin referencia'}")
+        for a in record.answers:
             print(f"  {a.resolver}  {','.join(a.ips) or 'error: ' + str(a.error_code)}")
     return 0
 
@@ -236,17 +227,15 @@ def _sync_ddns(
     except ConfigError as exc:
         print(exc, file=sys.stderr)
         return 1
-    managed = [r for r in config.records if r.mode == "managed" and r.enabled]
-    if not managed:
+    if not manual.managed_records(config):
         print("No hay registros managed habilitados: nada que sincronizar.")
         return 0
-    config = config.model_copy(update={"records": managed})
     observer = observer or DnspythonObserver(config.dns.resolvers)
 
     async def go():
         async with httpx.AsyncClient(transport=transport) as client:
             providers = build_providers(config, settings, client)
-            return await run_cycle(conn, config, client, observer, utc_now, providers, manual=True)
+            return await manual.sync_pass(conn, config, client, observer, providers, utc_now)
 
     conn = _open_db(settings)
     try:
