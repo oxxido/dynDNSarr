@@ -24,7 +24,10 @@ def connect(path: str | Path) -> sqlite3.Connection:
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    os.close(os.open(path, os.O_CREAT | os.O_RDWR, 0o600))
+    if not path.exists():
+        # Solo al crearla: en POSIX, cerrar un descriptor de la BD libera los bloqueos que el
+        # proceso tiene sobre ella, también los de otra conexión abierta (se pierden escrituras).
+        os.close(os.open(path, os.O_CREAT | os.O_RDWR, 0o600))
     conn = sqlite3.connect(path, isolation_level=None)
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
