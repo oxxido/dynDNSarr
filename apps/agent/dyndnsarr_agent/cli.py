@@ -32,8 +32,11 @@ def _load_settings() -> Settings:
     except ValidationError as exc:
         # Sin el valor recibido: a futuro la configuración puede incluir secretos.
         prefix = Settings.model_config["env_prefix"]
+        # Un error de la validación cruzada (sin campo) ya nombra las variables en su mensaje.
         problems = "\n".join(
             f"  {prefix}{'_'.join(map(str, e['loc'])).upper()}: {e['msg']}"
+            if e["loc"]
+            else f"  {e['msg']}"
             for e in exc.errors(include_input=False)
         )
         sys.exit(f"Configuración inválida:\n{problems}")
