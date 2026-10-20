@@ -1,9 +1,9 @@
 # Slice 6 — Integraciones y release v1.0
 
-- **Estado:** en implementación
+- **Estado:** en revisión
 - **Fase (arquitectura):** 5 (§10, §11, §12 y §13 casos 8, 10–12, 14)
 - **Rama:** `slice/06-integraciones-release`
-- **PR:** —
+- **PR:** [#9](https://github.com/oxxido/dynDNSarr/pull/9)
 
 ## Objetivo
 
@@ -117,3 +117,8 @@ La publicación del release y pruebas de hardware quedan para después del merge
   antes del merge. No se ha leído `.env`, `docs/deprecated/` ni se han cambiado AGENTS.md o el servidor.
 - Comprobaciones del hardware/Pi-hole/SMTP/webhook/Homarr propios y despliegue Raspberry/Dockge
   pendientes del administrador, según operaciones §10.5; no se simula evidencia de instalación real.
+
+**Entrega:** rama subida y [PR #9](https://github.com/oxxido/dynDNSarr/pull/9) abierto contra main,
+sin merge. Suite completa final Python 3.11/3.12, wheels e imagen Docker: evidencia viva en
+[los checks del PR](https://github.com/oxxido/dynDNSarr/pull/9/checks). La publicación de tag/release
+sigue pendiente del merge y decisión del mantenedor; no equivale a este PR abierto.
