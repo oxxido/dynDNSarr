@@ -433,4 +433,5 @@ El Agent sigue entregando eventos por la ruta privada de §6 (`hub.example.lan`)
 3. Apaga el Agent: tras unos 3 minutos la página pasa a `Desconocido` sin tocarla y conserva la hora de la última comprobación.
 4. Publícala tras el proxy de §8.3 y comprueba desde fuera que `/api/v1/...`, `/docs` y `/healthz` dan 404.
 5. `DYNDNSARR_HUB_PUBLIC_ENABLED=false` y reinicia: `/` y `/public/v1/status` dan 404.
-6. Los cuatro estados se ven con la mascota (verde, naranja, roja y gris). Si ves el pulpito «apagado» frente a la maqueta, es la decisión abierta A7: los PNG son las bases sin rostro.
+6. Los cuatro estados se ven con la mascota (verde, naranja, roja y gris) y su cara: sonrisa, boca ondulada, ceño y línea recta. Las pupilas siguen al puntero, la mascota flota sobre su sombra y suben burbujas por detrás. Con «reducir movimiento» en el sistema, nada de eso se mueve.
+7. Los PNG pesan ~1,5 MB cada uno: optimizarlos queda pendiente ([ADR-0008](decisions/0008-animacion-mascota.md)).

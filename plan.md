@@ -33,7 +33,7 @@ Estado de cada slice: [docs/slices/README.md](docs/slices/README.md).
 | A2 TLS Agent–Hub / rotación de tokens | slice3a (Agent → Hub, proxy TLS); slice3b amplía al sentido Hub → Agent |
 | A6 Registro del Hub (manual seguro) | slice3a |
 | A5 Representación pública de dominios | slice4 (resuelta: [ADR-0007](docs/decisions/0007-landing-publica.md)) |
-| A7 Asset facial estático (PNG sin ojos/boca) | slice4 (resuelta: bases sin rostro, [ADR-0007](docs/decisions/0007-landing-publica.md)); cara visible, otro slice antes del release |
+| A7 Asset facial estático (PNG sin ojos/boca) | slice4 (resuelta: bases sin rostro con cara SVG superpuesta y animada, [ADR-0008](docs/decisions/0008-animacion-mascota.md)) |
 
 Pendientes que **no** figuran en A1–A7 y afectan al slice1 (resolver al planificarlo):
 

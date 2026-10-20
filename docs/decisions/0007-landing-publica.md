@@ -14,7 +14,7 @@ El slice 4 ([slices/04-landing-publica.md](../slices/04-landing-publica.md)) sir
 4. **Nombres y renovaciones (D4, A5).** Una renovación es un `dns_update_succeeded`. Por defecto no se muestra el nombre del registro (resuelve públicamente a la IP completa); `DYNDNSARR_HUB_PUBLIC_SHOW_DOMAINS=true` lo añade, por decisión explícita del administrador.
 5. **Historial (D5).** Cada refresco inserta una muestra con el estado derivado (un fallo es `unknown`); 84 barras de 2 h sobre 7 días, peor estado conocido por barra y gris sin datos; `coverage` informa de lo observado. Retención de 30 días.
 6. **Publicación (D6).** `GET /` y `GET /public/v1/status`; con `PUBLIC_ENABLED=false` ambas y `/static` dan el mismo 404 que una ruta inexistente. CSS/JS inline con CSP por petición con nonce (sin `'unsafe-inline'`), Jinja2 con autoescape, solo `GET`.
-7. **Mascota (A7).** Se usan las bases sin ojos ni boca; una cara visible exige otros assets y otro slice.
+7. **Mascota (A7).** Se usan las bases sin ojos ni boca. *Revisada por [ADR-0008](0008-animacion-mascota.md):* la cara se superpone como SVG, sin otros assets.
 
 ## Consecuencias
 

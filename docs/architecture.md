@@ -17,7 +17,7 @@ Construir DynDNSarr: un administrador DDNS para homelabs con **Agent autónomo e
 4. No conectar la vista pública a esquemas internos ni devolver IP completa, MAC, nombres de dispositivos o secretos. Crear un DTO público específico.  
 5. No copiar datos falsos de la maqueta a producción: todos los indicadores operativos provienen de observaciones con marca temporal o indican `unknown`.  
 6. Crear pruebas automatizadas antes de integrar con DonDominio real o de exponer endpoints administrativos.  
-7. Preservar la landing visual validada; no agregar animación facial ni reconstruir la mascota con SVG en esta fase.  
+7. Preservar la landing visual validada. Desde slice4 la mascota lleva una cara SVG superpuesta y animada (ojos que siguen al puntero, parpadeo, boca por estado), sombra, flotación y burbujas de fondo ([ADR-0008](decisions/0008-animacion-mascota.md)); los PNG no se alteran ni se reconstruye la mascota con SVG.  
 8. Para cada etapa: código, tests, configuración de ejemplo, instrucciones de arranque, migraciones y criterios de aceptación demostrables.
 
 ## 1\. Alcance: v1.0 y posteriores
@@ -280,9 +280,9 @@ Un Agent inalcanzable **no significa necesariamente** que Internet de la viviend
 
 ## 9\. Vista pública y privada (referencia gráfica real)
 
-**Fuente visual validada:** `dyndnsarr-landing-inline.zip`, estructura: `index.html` (CSS y JS incrustados) \+ `assets/dyno-green.png`, `dyno-orange.png`, `dyno-red.png` externos. **No animar ojos ni boca**. Se mantienen diseño, mascota estática, responsive y selector `Sistema / Claro / Oscuro`. La landing actual contiene **datos simulados** y un selector de estado de desarrollo que se debe retirar/ocultar en producción.
+**Fuente visual validada:** `dyndnsarr-landing-inline.zip`, estructura: `index.html` (CSS y JS incrustados) \+ `assets/dyno-green.png`, `dyno-orange.png`, `dyno-red.png` externos. **Ojos y boca animados** ([ADR-0008](decisions/0008-animacion-mascota.md)): cara SVG superpuesta a los PNG sin rostro. Se mantienen diseño, mascota (PNG originales con cara, sombra, flotación y burbujas de fondo), responsive y selector `Sistema / Claro / Oscuro`. La landing actual contiene **datos simulados** y un selector de estado de desarrollo que se debe retirar/ocultar en producción.
 
-**Importante:** Los PNG de la referencia actual están **sin ojos ni boca** para una posible animación posterior; no inventar una nueva animación ahora. Si se exige una cara visible en la landing, pedir/verificar assets estáticos finales por separado antes de implementación definitiva.
+**Importante:** Los PNG de la referencia actual están **sin ojos ni boca**; la cara es un SVG superpuesto con coordenadas sobre 1254×1254 ([ADR-0008](decisions/0008-animacion-mascota.md)). Si se sustituyen los PNG por otros con otra proporción o posición del cuerpo, hay que reajustar la cara (macro `face` de la plantilla).
 
 **UI pública**: solo estado general, mascota, última comprobación exitosa y hasta cinco renovaciones, con fechas y los **dos últimos dígitos de IPv4** cuando corresponda. No exponer dominio concreto si su nombre facilita información privada, salvo que el producto/administrador lo autorice explícitamente; el PRD autoriza renovaciones pero restringe infraestructura y se debe usar política conservadora de nombres mostrados. No mostrar IP completa, dispositivos, MACs, configuración, tokens, usuario administrador, logging interno. Incluir opción para desactivar página pública.
 
@@ -391,7 +391,7 @@ Tema `system/light/dark`: `prefers-color-scheme`, selector manual, preferencia p
 12. Vista pública → sin IPv4 completa, MAC, credenciales, dispositivos ni información interna.  
 13. Switch Sistema/Claro/Oscuro → persiste y sigue cambios de SO en modo Sistema.  
 14. Docker y systemd se reinician → datos y servicios recuperados.  
-15. Preferencia de animación reducida → ninguna animación no esencial.
+15. Preferencia de animación reducida → ninguna animación no esencial (cara, flotación, sombra y burbujas; las pupilas quedan centradas).
 
 ## 14\. Decisiones técnicas aún abiertas (resolver sin cambiar arquitectura)
 
@@ -401,7 +401,7 @@ Tema `system/light/dark`: `prefers-color-scheme`, selector manual, preferencia p
 - **A4**: Política exacta de retención, frecuencia de comprobación IP y umbrales de estados (configurables; proponer defaults documentados).  
 - **A5**: Cómo representar públicamente dominios/renovaciones sin revelar infraestructura (aprobar un DTO con ejemplos reales anonimizados).  
 - **A6**: Registro/descubrimiento del Hub inicial: manual seguro ahora, mDNS opcional futuro.  
-- **A7**: Asset facial estático final: los PNG aprobados actuales no incluyen ojos/boca. Definir si la landing v1 usa las bases sin rostro o recibe sprites completos antes del release.
+- **A7**: Asset facial estático final: los PNG aprobados actuales no incluyen ojos/boca. Definir si la landing v1 usa las bases sin rostro o recibe sprites completos antes del release. **Resuelta en slice4:** bases sin rostro con cara SVG superpuesta ([ADR-0008](decisions/0008-animacion-mascota.md)).
 
 ## 15\. Prompt de arranque para Codex/Claude
 
