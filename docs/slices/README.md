@@ -25,4 +25,4 @@ Un slice es la unidad de trabajo: una rama y un PR. El orden y el alcance genera
 | 6 | 5 | Integraciones y release v1.0 | pendiente | — | — |
 | 7 | 6 | v1.1 (MCP y Caddy) | pendiente | — | — |
 
-Ajuste final de slice5 tras el merge: filtros visibles del historial y regresión de umbrales, en `fix/05-filtros-historial` (PR complementario pendiente de apertura). La implementación principal del slice está fusionada; no se ha iniciado slice6.
+Ajuste final de slice5 tras el merge: filtros visibles del historial y regresión de umbrales, en `fix/05-filtros-historial` ([PR complementario #8](https://github.com/oxxido/dynDNSarr/pull/8)). La implementación principal del slice está fusionada; no se ha iniciado slice6.
