@@ -50,7 +50,7 @@ class ConfigResult(_Model):
 class CommandRequest(_Model):
     command_id: EventId
     type: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")]
-    resource_id: Annotated[str, Field(max_length=128)] | None = None
+    resource_id: Annotated[str, Field(max_length=253)] | None = None
     requested_by: Annotated[str, Field(min_length=1, max_length=64)]
     expires_at: Instant
     parameters: dict[str, Any] = {}
