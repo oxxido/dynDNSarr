@@ -9,7 +9,9 @@ import sqlite3
 from collections.abc import Callable
 from datetime import datetime
 
-from dyndnsarr_hub.db import control_repo
+from dyndnsarr_hub.clock import parse_instant
+from dyndnsarr_hub.db import control_repo, public_repo
+from dyndnsarr_hub.public.state import ip_suffix
 from dyndnsarr_shared.control import COMMAND_STATUSES
 from dyndnsarr_shared.events import AgentEvent
 
@@ -52,11 +54,38 @@ def _command_completed(conn: sqlite3.Connection, event: AgentEvent, now: datetim
     )
 
 
+def _renewal(conn: sqlite3.Connection, event: AgentEvent, now: datetime) -> None:
+    """Proyección pública (ADR-0007, D2): de la IP solo se guarda el sufijo; la completa se
+    descarta aquí y no vuelve a la capa pública."""
+    suffix = ip_suffix(event.payload.get("ip"))
+    if suffix is None or event.record_name is None:
+        return
+    public_repo.add_renewal(
+        conn,
+        event.agent_id,
+        event.event_id,
+        event.record_name,
+        parse_instant(event.occurred_at),
+        suffix,
+    )
+
+
+def _verified(conn: sqlite3.Connection, event: AgentEvent, now: datetime) -> None:
+    suffix = ip_suffix(event.payload.get("ip"))
+    if suffix is None or event.record_name is None:
+        return
+    public_repo.mark_verified(
+        conn, event.agent_id, event.record_name, suffix, parse_instant(event.occurred_at)
+    )
+
+
 _HANDLERS: dict[str, Callable[[sqlite3.Connection, AgentEvent, datetime], None]] = {
     "config_applied": _config_result,
     "config_rejected": _config_result,
     "config_reset": _config_reset,
     "command_completed": _command_completed,
+    "dns_update_succeeded": _renewal,
+    "dns_verified": _verified,
 }
 
 

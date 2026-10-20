@@ -29,11 +29,11 @@ Estado de cada slice: [docs/slices/README.md](docs/slices/README.md).
 | A3 Scheduler y acceso a SQLite | slice1 (acceso SQLite/migraciones), slice2a (scheduler) |
 | A1 API DonDominio | slice2b (resuelta: [ADR-0004](docs/decisions/0004-actualizacion-ddns-dondominio.md)) |
 | A4 Retención, frecuencia | slice2a |
-| A4 Umbrales `healthy/degraded/critical` y uptime | slice5 (donde se consumen) |
+| A4 Umbrales `healthy/degraded/critical` y uptime | slice5 (donde se consumen); slice4 fija una regla mínima provisional ([ADR-0007](docs/decisions/0007-landing-publica.md)) |
 | A2 TLS Agent–Hub / rotación de tokens | slice3a (Agent → Hub, proxy TLS); slice3b amplía al sentido Hub → Agent |
 | A6 Registro del Hub (manual seguro) | slice3a |
-| A5 Representación pública de dominios | slice4 |
-| A7 Asset facial estático (PNG sin ojos/boca) | slice4, antes del release |
+| A5 Representación pública de dominios | slice4 (resuelta: [ADR-0007](docs/decisions/0007-landing-publica.md)) |
+| A7 Asset facial estático (PNG sin ojos/boca) | slice4 (resuelta: bases sin rostro con cara SVG superpuesta y animada, [ADR-0008](docs/decisions/0008-animacion-mascota.md)) |
 
 Pendientes que **no** figuran en A1–A7 y afectan al slice1 (resolver al planificarlo):
 

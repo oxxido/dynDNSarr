@@ -10,3 +10,5 @@ Una decisión que debe sobrevivir a un slice se registra aquí: `NNNN-titulo-cor
 | [0004](0004-actualizacion-ddns-dondominio.md) | API DonDominio, credenciales, backoff y verificación de la actualización `managed` |
 | [0005](0005-enlace-agent-hub.md) | Enlace Agent → Hub: proxy TLS verificado, registro manual, token por agente, contrato y outbox at-least-once |
 | [0006](0006-control-hub-agent.md) | Control Hub → Agent: TLS propio del Agent, token Bearer, configuración versionada y comandos idempotentes |
+| [0007](0007-landing-publica.md) | Landing pública: proyección sin IP completa, estado derivado al leer, historial observado y publicación con CSP |
+| [0008](0008-animacion-mascota.md) | Animación de la mascota: cara SVG superpuesta, flotación, sombra y burbujas |

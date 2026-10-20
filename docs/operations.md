@@ -377,3 +377,61 @@ docker compose exec hub dyndnsarr-hub command-show --refresh <command_id>
 2. `config-push` de un cambio real (por ejemplo `check_interval_seconds = 120`): «aplicada»; `dyndnsarr-agent status` muestra `Configuración: versión 1`. Repite con un valor inválido (`check_interval_seconds = 5`): «rechazada (`invalid_config`)» y el Agent sigue en la versión 1.
 3. `command raspberry-home check_dns` y `sync_ddns`: llegan a `succeeded` con `command-show --refresh`.
 4. `dyndnsarr-agent config-reset` + reinicio: `Configuración: TOML local`; en el Hub, `config-show` indica que manda el TOML y `config-resend` lo vuelve a aplicar.
+
+## 8. Landing pública (slice 4)
+
+El Hub sirve una **página pública de estado** (`GET /`) y su JSON (`GET /public/v1/status`), sin login y de solo lectura. Muestra el estado general con la mascota, la última comprobación satisfactoria, las cinco últimas renovaciones (fecha y hora en **UTC** y los dos últimos dígitos de la IPv4), el estado de conectividad y el historial de 7 días. Nunca muestra la IP completa, MAC, dispositivos, tokens ni configuración: sale de un `PublicStatusDTO` con campos de lista blanca y solo lee las tablas `public_*` de `hub.db`, no `events`. La página no se refresca sola: muestra lo del momento de cargarla.
+
+### 8.1 Variables del Hub
+
+| Variable | Por defecto | Efecto |
+|---|---|---|
+| `DYNDNSARR_HUB_PUBLIC_ENABLED` | `true` | `false`: `/`, `/public/*` y `/static/*` dan el mismo 404 que una ruta inexistente. |
+| `DYNDNSARR_HUB_PUBLIC_SHOW_DOMAINS` | `false` | `true`: cada renovación añade el nombre del registro. **Ese nombre resuelve en el DNS público a tu IP completa**: actívalo solo si aceptas que quede a una consulta. |
+| `DYNDNSARR_HUB_STATUS_REFRESH_SECONDS` | `60` (mínimo 15) | Cada cuánto consulta el Hub el `status` de cada Agent. |
+
+Con Docker Compose se leen del `.env` junto a `apps/hub/compose.yaml` (ver `.env.example`).
+
+### 8.2 De dónde sale el estado
+
+Una tarea del Hub consulta cada minuto el `GET /internal/v1/status` de cada Agent con API configurada (**§7.2 es requisito**: `agent-set-api` y `agent-api-token`) y guarda una proyección **sin la IP completa**. La petición web nunca llama al Agent. El estado se deriva al leer, con reglas provisionales ([ADR-0007](decisions/0007-landing-publica.md)):
+
+| Estado | Texto | Cuándo |
+|---|---|---|
+| `healthy` | Operativo | IP confirmada, todos los registros `verified`, observación de menos de 15 min. |
+| `degraded` | Degradado | IP `uncertain`, o algún registro sin verificar (`pending_verification`, `mismatch` de menos de 1 h, fallo con reintento). |
+| `critical` | Sin conexión | `mismatch` de más de 1 h, o error definitivo de la actualización. |
+| `unknown` | Desconocido | No hay proyección, el refresco tiene más de 3 × `STATUS_REFRESH_SECONDS`, la última comprobación o confirmación de IP tiene más de 15 min, o no hay registros habilitados. |
+
+Con varios Agents manda el peor (`critical > degraded > unknown > healthy`). **`Desconocido` es lo correcto cuando no hay observación**: un Agent inalcanzable no significa que Internet haya caído, y nunca se muestra como «Sin conexión». Por eso un Hub recién instalado, un Agent sin API configurada o un Agent apagado dan `Desconocido`; la «Última comprobación» conserva su hora real. Los umbrales (15 min, 1 h, 3 refrescos) no están verificados con datos reales; si cambias `check_interval_seconds` del Agent a más de 15 min, la página quedará en `Desconocido` hasta el slice 5, que los hará configurables.
+
+El historial usa una muestra por refresco (30 días de retención): 84 barras de 2 h, cada una con el peor estado **conocido**; gris donde no se observó nada (el porcentaje observado se indica en el panel). Una renovación es un `dns_update_succeeded`; aparece «Pendiente de verificación» hasta que llega el `dns_verified` del mismo registro. Las renovaciones anteriores a esta versión no se muestran (la lista arranca vacía).
+
+### 8.3 Publicarla sin exponer el resto del Hub
+
+**No publiques el Hub entero**: `/api/v1` (entrega de eventos), `/docs`, `/openapi.json` y `/healthz` no deben ser alcanzables desde Internet. El proxy debe reenviar solo `/`, `/static/*` y `/public/*`. Receta no probada contra tu infraestructura (criterio manual del slice):
+
+```
+# Caddyfile
+status.example.com {
+    @public path / /static/* /public/*
+    handle @public {
+        reverse_proxy 127.0.0.1:8000
+    }
+    handle {
+        respond 404
+    }
+}
+```
+
+El Agent sigue entregando eventos por la ruta privada de §6 (`hub.example.lan`), no por este sitio. El **límite de tasa** lo pone el proxy: el Hub tiene un solo worker y cada petición pública hace unas lecturas SQLite, pero sin límite alguien podría saturarlo.
+
+### 8.4 Comprobación manual
+
+1. Con el Agent real y §7 configurado: `curl -s http://127.0.0.1:8000/public/v1/status` pasa de `unknown` a `healthy` (o `degraded` si hay un registro por verificar) en un minuto; revisa que no aparece tu IP completa.
+2. Abre `/` en escritorio y móvil, en los temas Sistema, Claro y Oscuro; la elección persiste al recargar.
+3. Apaga el Agent: tras unos 3 minutos la página pasa a `Desconocido` sin tocarla y conserva la hora de la última comprobación.
+4. Publícala tras el proxy de §8.3 y comprueba desde fuera que `/api/v1/...`, `/docs` y `/healthz` dan 404.
+5. `DYNDNSARR_HUB_PUBLIC_ENABLED=false` y reinicia: `/` y `/public/v1/status` dan 404.
+6. Los cuatro estados se ven con la mascota (verde, naranja, roja y gris) y su cara: sonrisa, boca ondulada, ceño y línea recta. Las pupilas siguen al puntero, la mascota flota sobre su sombra y suben burbujas por detrás. Con «reducir movimiento» en el sistema, nada de eso se mueve.
+7. Los PNG pesan ~1,5 MB cada uno: optimizarlos queda pendiente ([ADR-0008](decisions/0008-animacion-mascota.md)).

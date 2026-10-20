@@ -16,6 +16,11 @@ services:
       # CA que firma los certificados de los Agents (slice 3b). Vive en el volumen /data y no en un
       # bind mount: si el archivo no existe, Docker crearía un directorio (docs/operations.md §7.1).
       DYNDNSARR_HUB_AGENT_CA_FILE: ${DYNDNSARR_HUB_AGENT_CA_FILE:-/data/agent-ca.pem}
+      # Landing pública (slice 4, docs/operations.md §8). SHOW_DOMAINS añade el nombre del registro,
+      # que resuelve a la IP completa en el DNS público: déjalo en false salvo decisión explícita.
+      DYNDNSARR_HUB_PUBLIC_ENABLED: ${DYNDNSARR_HUB_PUBLIC_ENABLED:-true}
+      DYNDNSARR_HUB_PUBLIC_SHOW_DOMAINS: ${DYNDNSARR_HUB_PUBLIC_SHOW_DOMAINS:-false}
+      DYNDNSARR_HUB_STATUS_REFRESH_SECONDS: ${DYNDNSARR_HUB_STATUS_REFRESH_SECONDS:-60}
     volumes:
       - hub-data:/data
 

@@ -45,8 +45,16 @@ def check_api_url(url: str) -> str:
 def build_http_client(
     ca_file: Path | None, transport: httpx.AsyncBaseTransport | None = None
 ) -> httpx.AsyncClient:
-    """Cliente con verificación TLS completa: solo la CA indicada, o el almacén del sistema."""
-    return httpx.AsyncClient(verify=build_ssl_context(ca_file), transport=transport)
+    """Cliente con verificación TLS completa: solo la CA indicada, o el almacén del sistema.
+
+    Sin conexiones persistentes: el refresco de estado (slice 4) llama una vez por minuto y una
+    conexión TLS ociosa en el pool no contesta al cierre del Agent, que tardaría hasta 30 s en
+    apagarse."""
+    return httpx.AsyncClient(
+        verify=build_ssl_context(ca_file),
+        transport=transport,
+        limits=httpx.Limits(max_keepalive_connections=0),
+    )
 
 
 @dataclass(frozen=True)

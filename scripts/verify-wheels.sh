@@ -71,3 +71,36 @@ echo "OK: agent y hub instalados desde wheel importan commands y services"
 # `agent-list` falla si las migraciones 0002 y 0003 del Hub no viajaron en el wheel (lee `api_url`).
 DYNDNSARR_HUB_DATA_DIR="$work/data-hub" "$work/venv/bin/dyndnsarr-hub" agent-list >/dev/null
 echo "OK: hub instalado desde wheel ejecuta 'dyndnsarr-hub agent-list'"
+
+# Landing pública (slice 4): la plantilla y los estáticos deben viajar en el wheel del Hub (se
+# declaran a mano en `package-data`). `/` responde con la plantilla; los PNG de la mascota, si el
+# repositorio ya los trae, deben servirse con 200 `image/png`.
+port="$("$work/venv/bin/python" -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
+DYNDNSARR_HUB_PORT="$port" DYNDNSARR_HUB_DATA_DIR="$work/data-hub" \
+    "$work/venv/bin/dyndnsarr-hub" 2>"$work/hub-public.log" &
+pid=$!
+for _ in $(seq 1 50); do
+    "$work/venv/bin/python" - "$port" <<'PY' 2>/dev/null && break || sleep 0.2
+import sys, urllib.request
+urllib.request.urlopen(f"http://127.0.0.1:{sys.argv[1]}/healthz", timeout=1)
+PY
+done
+pngs=""
+for name in dyno-green dyno-orange dyno-red; do
+    [ -f "$root/apps/hub/dyndnsarr_hub/static/assets/$name.png" ] && pngs="$pngs $name.png"
+done
+"$work/venv/bin/python" - "$port" $pngs <<'PY'
+import sys, urllib.request
+base = f"http://127.0.0.1:{sys.argv[1]}"
+page = urllib.request.urlopen(f"{base}/", timeout=3)
+html = page.read().decode()
+assert page.status == 200 and "Estado del servicio" in html and "Desconocido" in html, "plantilla"
+assert "nonce-" in page.headers["Content-Security-Policy"]
+for name in sys.argv[2:]:
+    png = urllib.request.urlopen(f"{base}/static/assets/{name}", timeout=3)
+    assert png.status == 200 and png.headers["Content-Type"] == "image/png", name
+print("OK: hub instalado desde wheel sirve / con plantilla" + (f" y {len(sys.argv) - 2} PNG" if len(sys.argv) > 2 else ""))
+if len(sys.argv) <= 2:
+    print("AVISO: el repositorio aún no trae los PNG de la mascota (slice 4, paso 9); no se comprobaron", file=sys.stderr)
+PY
+kill "$pid"; wait "$pid" 2>/dev/null || true; pid=""
