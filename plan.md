@@ -17,7 +17,7 @@ Los slices se numeran `slice1`, `slice2`… y corresponden 1:1 a las fases de la
 | slice3b | 2 | Hub → Agent: `health`/`status`, config versionada con ack, comandos idempotentes (`check_dns`, `sync_ddns`) | Config inválida no cambia el Agent; comando duplicado se ejecuta una vez |
 | slice4 | 3 | Landing pública real (`index.html` → Jinja2, `PublicStatusDTO`) | Ausencia demostrable de IP completa y datos privados |
 | slice5 | 4 | Hub privado y diagnósticos (login, dashboard, historial, uptime) | Operaciones privadas inaccesibles sin login; `monitored` nunca se escribe |
-| slice6 | 5 | Integraciones y release v1.0 (Pi-hole, WoL, alertas, Homarr, retención, docs de instalación) | Integraciones caídas no bloquean DDNS; instalación limpia reproducible |
+| slice6 | 5 | Integraciones y release v1.0 (Pi-hole, WoL, alertas, Homarr, retención/exportación, docs de instalación) | Integraciones caídas no bloquean DDNS; instalación limpia reproducible |
 | slice7 | 6 | v1.1 (MCP, Caddy) — posterior, no comprometido | Ver PRD §19 |
 
 Estado de cada slice: [docs/slices/README.md](docs/slices/README.md).

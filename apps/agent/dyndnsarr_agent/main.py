@@ -89,15 +89,52 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 rebuild=rebuild,
             )
             app.state.holder = holder
+            integration_worker = None
+            if settings.integrations_file is not None:
+                try:
+                    from dyndnsarr_agent.integrations.config import load
+                    from dyndnsarr_agent.integrations.worker import IntegrationWorker
+
+                    integration_config = load(settings.integrations_file)
+                    integration_http = await stack.enter_async_context(
+                        httpx.AsyncClient(
+                            verify=build_ssl_context(
+                                integration_config.pihole.ca_file
+                                if integration_config.pihole
+                                else None
+                            ),
+                            trust_env=False,
+                            transport=app.state.integration_transport,
+                        )
+                    )
+                    integration_conn = connect(settings.db_path)
+                    stack.callback(integration_conn.close)
+                    integration_worker = IntegrationWorker(
+                        integration_conn,
+                        integration_config,
+                        integration_http,
+                        settings.pihole_password.get_secret_value()
+                        if settings.pihole_password
+                        else "",
+                    )
+                except Exception as exc:
+                    app.state.integration_error = True
+                    logger.error(
+                        "integration_config_failed", extra={"error_type": type(exc).__name__}
+                    )
             executor = None
             if settings.api_enabled:
-                executor = CommandExecutor(conn, holder, client, settings.lock_path)
+                executor = CommandExecutor(
+                    conn, holder, client, settings.lock_path, integrations=integration_worker
+                )
                 executor.recover()
                 app.state.executor = executor
             tasks = [
                 asyncio.create_task(run_forever(conn, holder, client, lock_path=settings.lock_path))
             ]
             app.state.ddns_task = tasks[0]
+            if integration_worker is not None:
+                tasks.append(asyncio.create_task(integration_worker.run(recovered=boot_count > 1)))
             if executor is not None:
                 tasks.append(asyncio.create_task(executor.run()))
             hub = ddns_config.hub
@@ -139,6 +176,7 @@ def create_app(
     observer: DnsObserver | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
     hub_transport: httpx.AsyncBaseTransport | None = None,
+    integration_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     """Crea la app. Con `config_file` carga y valida el TOML y las credenciales que exija.
 
@@ -146,6 +184,7 @@ def create_app(
     """
     app = FastAPI(title="DynDNSarr Agent", version=__version__, lifespan=lifespan)
     app.state.settings = settings
+    app.state.integration_error = False
     active = load_active(settings) if settings.config_file else None
     if active is not None:
         try:
@@ -171,6 +210,7 @@ def create_app(
     app.state.ddns_transport = transport
     app.state.ddns_task = None
     app.state.hub_transport = hub_transport
+    app.state.integration_transport = integration_transport
     app.state.outbox_task = None
     app.include_router(health_router)
     if settings.api_enabled:

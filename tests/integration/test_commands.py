@@ -207,7 +207,7 @@ def test_a_command_that_expires_while_queued_is_not_executed(world):
 @pytest.mark.parametrize(
     "kwargs,code",
     [
-        ({"type": "wake_device"}, "unsupported_command"),
+        ({"type": "wake_device"}, "device_not_allowed"),
         ({"type": "rm_rf"}, "unsupported_command"),
         ({"parameters": {"x": 1}}, "invalid_command"),
         ({"resource_id": "nas-1"}, "invalid_command"),

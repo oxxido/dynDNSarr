@@ -1,6 +1,6 @@
 # DynDNSarr
 
-Administrador DDNS para homelabs: un **Agent** autónomo en una Raspberry Pi y un **Hub** web en un servidor Docker. Estado actual: ambos componentes arrancan con `/healthz`, SQLite con migraciones y logs JSON sin secretos; el Agent observa IP pública y DNS y actualiza en DonDominio los registros `managed` (slices 2a y 2b; ver [docs/operations.md](docs/operations.md) §5) y entrega sus eventos al Hub por un enlace TLS autenticado, con entrega at-least-once (slice 3a; §6).
+Administrador DDNS para homelabs: un **Agent** autónomo en una Raspberry Pi y un **Hub** web en un servidor Docker. v1.0 incluye DonDominio, monitorización y diagnóstico DNS, administración privada, landing pública, Pi-hole v6, Wake-on-LAN por dispositivo, alertas SMTP/webhook compatibles con Slack y widget Homarr. Las integraciones son opcionales y sus fallos no detienen DDNS. Instalación y configuración: [operaciones](docs/operations.md), especialmente §10 para integraciones y release.
 
 - Producto: [docs/requirements.md](docs/requirements.md) · Arquitectura: [docs/architecture.md](docs/architecture.md) · Roadmap: [plan.md](plan.md)
 - Convenciones: [docs/conventions.md](docs/conventions.md) · Slices: [docs/slices/README.md](docs/slices/README.md)

@@ -29,23 +29,33 @@ def test_upgrade_from_0004_backup_and_restore_preserve_data_and_revocation(tmp_p
         db.executescript(f"BEGIN;\n{script.read_text()}\nPRAGMA user_version={version}; COMMIT;")
     with transaction(db):
         agents_repo.create_agent(db, "home", hash_token("test"), NOW)
-        events_repo.insert_events(
-            db,
-            [
-                AgentEvent(
-                    agent_id="home",
-                    event_id=str(uuid.uuid4()),
-                    sequence=1,
-                    type="ip_changed",
-                    occurred_at="2026-10-20T12:00:00Z",
-                    payload={"ip": "83.45.12.134"},
-                )
-            ],
-            NOW,
+        # Datos del esquema anterior, sin usar repositorios del esquema nuevo.
+        db.execute(
+            "INSERT INTO events VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "home",
+                str(uuid.uuid4()),
+                1,
+                "ip_changed",
+                "2026-10-19T11:00:00Z",
+                "2026-10-19T12:00:00Z",
+                "home.example.com",
+                '{"ip":"83.45.12.134"}',
+            ),
         )
         control_repo.add_desired_version(db, "home", {"records": []}, NOW)
-        control_repo.create_command(
-            db, str(uuid.uuid4()), "home", "check_dns", "admin:cli", NOW, "2026-10-20T12:05:00Z"
+        db.execute(
+            "INSERT INTO commands VALUES (?,?,?,?,?,?,?,?)",
+            (
+                str(uuid.uuid4()),
+                "home",
+                "check_dns",
+                "admin:cli",
+                "2026-10-20T12:00:00Z",
+                "2026-10-20T12:05:00Z",
+                "pending",
+                None,
+            ),
         )
         public_repo.add_sample(db, "home", NOW, "healthy")
     migrate(db, MIGRATIONS)

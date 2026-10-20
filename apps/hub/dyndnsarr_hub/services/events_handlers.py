@@ -79,7 +79,17 @@ def _verified(conn: sqlite3.Connection, event: AgentEvent, now: datetime) -> Non
     )
 
 
+def _ip_change(conn, event, now):
+    if ip_suffix(event.payload.get("ip")) is not None:
+        conn.execute(
+            "INSERT INTO public_ip_changes VALUES (?,?) ON CONFLICT(agent_id) DO UPDATE SET "
+            "occurred_at=max(public_ip_changes.occurred_at,excluded.occurred_at)",
+            (event.agent_id, event.occurred_at),
+        )
+
+
 _HANDLERS: dict[str, Callable[[sqlite3.Connection, AgentEvent, datetime], None]] = {
+    "ip_changed": _ip_change,
     "config_applied": _config_result,
     "config_rejected": _config_result,
     "config_reset": _config_reset,

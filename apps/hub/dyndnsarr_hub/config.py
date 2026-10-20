@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,8 +27,37 @@ class Settings(BaseSettings):
 
     # Origen HTTPS que presenta el navegador; el Hub puede estar detrás de un proxy HTTP.
     admin_origin: str | None = None
+    alerts_file: Path | None = None
+    integrations_enabled: bool = False
+    webhook_url: SecretStr | None = None
+    smtp_user: SecretStr | None = None
+    smtp_password: SecretStr | None = None
+    retention_days: int = Field(365, ge=1, le=3650)
+    receipts_days: int = Field(400, ge=1, le=3650)
+    homarr_origin: str | None = None
+    application_url: str | None = None
 
-    @field_validator("admin_origin")
+    @field_validator("alerts_file", mode="before")
+    @classmethod
+    def optional_alert_file(cls, value):
+        return None if value == "" else value
+
+    @model_validator(mode="after")
+    def retention_window(self):
+        if self.receipts_days < self.retention_days:
+            raise ValueError("RECEIPTS_DAYS debe ser al menos RETENTION_DAYS")
+        return self
+
+    @field_validator("application_url")
+    @classmethod
+    def application_destination(cls, value):
+        if not value:
+            return None
+        from dyndnsarr_shared.outbound import validate_url
+
+        return validate_url(value)
+
+    @field_validator("admin_origin", "homarr_origin")
     @classmethod
     def _admin_origin(cls, value):
         from urllib.parse import urlsplit

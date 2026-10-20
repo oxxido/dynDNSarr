@@ -66,4 +66,11 @@ def command_details(command):
         if isinstance(records, dict)
         else []
     )
-    return {"code": safe_code(result.get("code")), "records": details}
+    wake_state = result.get("wake_state")
+    return {
+        "code": safe_code(result.get("code")),
+        "records": details,
+        "wake_state": wake_state
+        if wake_state in ("sent", "booting", "reachable", "unconfirmed")
+        else None,
+    }

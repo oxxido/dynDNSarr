@@ -151,17 +151,21 @@ def test_source_down_is_uncertain(conn, world):
     assert ddns_repo.list_events(conn, 1)[0].payload == {"reason": "insufficient_sources"}
 
 
-def test_resuming_with_the_same_ip_emits_nothing_and_a_new_outage_emits_again(conn, world):
+def test_resuming_with_the_same_ip_emits_recovery_and_a_new_outage_emits_again(conn, world):
     cycle(conn, world)
     world.sources = {"a.example": A, "b.example": B}
     cycle(conn, world)
     world.set_ip(A)
     resumed = cycle(conn, world)
     assert resumed.ip_status == "confirmed"
-    assert types(conn)[2:] == [("ip_uncertain", None)]
+    assert types(conn)[2:] == [("ip_uncertain", None), ("ip_recovered", None)]
     world.sources["b.example"] = None
     cycle(conn, world)
-    assert types(conn)[2:] == [("ip_uncertain", None), ("ip_uncertain", None)]
+    assert types(conn)[2:] == [
+        ("ip_uncertain", None),
+        ("ip_recovered", None),
+        ("ip_uncertain", None),
+    ]
 
 
 def test_resuming_with_a_new_ip_emits_ip_changed(conn, world):
@@ -170,7 +174,11 @@ def test_resuming_with_a_new_ip_emits_ip_changed(conn, world):
     cycle(conn, world)
     world.set_ip(B)
     cycle(conn, world)
-    assert types(conn)[2:4] == [("ip_uncertain", None), ("ip_changed", None)]
+    assert types(conn)[2:5] == [
+        ("ip_uncertain", None),
+        ("ip_recovered", None),
+        ("ip_changed", None),
+    ]
 
 
 def test_uncertain_ip_saves_dns_checks_but_does_not_reclassify(conn, world):

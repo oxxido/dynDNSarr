@@ -34,6 +34,21 @@ MAX_CONFIG_BYTES = 256 * 1024
 MAX_COMMAND_BYTES = 16 * 1024
 
 
+@router.get("/integrations", response_model=None)
+async def integrations(request: Request):
+    if (denied := _denied(request)) is not None:
+        return denied
+    from dyndnsarr_agent.integrations.worker import read_snapshot
+
+    snapshot = read_snapshot(request.app.state.db)
+    if request.app.state.integration_error:
+        snapshot.pihole, snapshot.error_code = "unavailable", "integration_failed"
+    return JSONResponse(
+        snapshot.model_dump(mode="json"),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 class _BodyTooLargeError(Exception):
     pass
 

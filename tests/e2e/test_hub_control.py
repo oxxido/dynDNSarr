@@ -355,7 +355,7 @@ def test_commands_and_link_security(stack):
         "/commands",
         json={**body, "command_id": str(uuid.uuid4()), "type": "wake_device", "resource_id": "nas"},
     )
-    assert wake.status_code == 422 and wake.json()["code"] == "unsupported_command"
+    assert wake.status_code == 422 and wake.json()["code"] == "device_not_allowed"
 
     # Por la consola del Hub: el comando llega a su estado final por el enlace.
     out = stack.hub("command", AGENT_ID, "check_dns").stdout

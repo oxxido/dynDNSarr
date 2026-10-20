@@ -527,3 +527,139 @@ Las incidencias son tramos observados consecutivos degradados/críticos. Solo un
 5. Envía un cambio inválido de frecuencia y comprueba el rechazo y conservación de la activa. Envía uno válido y verifica versión/hash/ack; repite el envío para comprobar que no duplica. Ejecuta `check_dns` y consulta su resultado.
 6. Solo con un registro `managed` real de prueba, comprueba `sync_ddns` y que los `monitored` siguen sin escritura. Esta mutación no se ha ejecutado automáticamente contra DonDominio.
 7. Reinicia el Hub: configuración, política y sesiones válidas se conservan; los huecos del uptime no se rellenan. Apaga la landing pública y comprueba que la administración sigue disponible.
+
+## 10. Integraciones y entrega v1.0 (slice6)
+
+### 10.1 Actualización e instalación limpia
+
+Haz un backup consistente (§4), conserva los archivos locales/secretos y actualiza primero el
+Agent y después el Hub. Se aplican automáticamente Agent 0006 y Hub 0007, sin borrar tablas.
+Para volver a una versión anterior restaura el backup: un binario antiguo rechaza un esquema nuevo.
+Los archivos de ejemplo no activan permisos WoL ni cambian tu `.env`.
+
+Construcción verificable desde un clon limpio con Python 3.11+:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e packages/shared -e apps/agent -e apps/hub -e '.[dev]'
+.venv/bin/ruff check .
+.venv/bin/pytest
+scripts/verify-wheels.sh
+.venv/bin/pip wheel --no-deps -w dist ./packages/shared ./apps/agent ./apps/hub
+```
+
+Instala los wheels de `shared` y `agent` en el venv dedicado de la Raspberry según §2; copia la
+configuración, instala la unidad systemd y aprovisiona TLS/tokens según §6–7. Estos cambios del
+sistema los ejecuta su administrador. No hace falta root, raw socket ni capacidades para WoL UDP
+o la comprobación TCP. El Hub se construye en Compose/Dockge según §3. Mantén `/data` persistente,
+HTTPS externo y la escucha restringida; crea el administrador por CLI (§9). La API `/healthz`
+sigue compatible y hay un worker por componente.
+
+El workflow `release.yml` verifica versión, pertenencia del tag a main, suite, wheels y Docker antes
+de publicar. Tras merge autorizado, el mantenedor puede crear/push `v1.0.0`; se adjuntan los tres
+wheels y `SHA256SUMS`, y se publica `ghcr.io/oxxido/dyndnsarr/hub:1.0.0` (imagen Linux amd64 del
+runner). Hasta que ese workflow termine correctamente, construye desde el repositorio; no asumas
+que el tag o la imagen existen. En Dockge, después de verificar la publicación, puedes sustituir
+`build` por la imagen semántica publicada. No se crea ningún tag/release al abrir el PR del slice.
+
+### 10.2 Pi-hole v6 y políticas WoL en el Agent
+
+Copia [integrations.example.toml](../apps/agent/config/integrations.example.toml) como archivo local
+del Agent, con permiso de lectura para su usuario, y declara `DYNDNSARR_AGENT_INTEGRATIONS_FILE`
+en su entorno. Es independiente del TOML DDNS y no se puede editar mediante config-push o la UI.
+Para desactivar Pi-hole elimina su sección; puedes mantener solo políticas WoL.
+
+- Fija URL de Pi-hole v6 y allowlist mínima de redes. Preferir HTTPS; una CA local puede indicarse
+  en `pihole.ca_file`. HTTP solo se permite a una dirección local explícitamente autorizada.
+- Configura `DYNDNSARR_AGENT_PIHOLE_PASSWORD` con una contraseña de aplicación Pi-hole v6.
+  El SID permanece solo en memoria; el adaptador usa POST de autenticación y GET de inventario y
+  concesiones. No modifica DNS/DHCP. Pi-hole v5 no está soportado.
+- Las lecturas tienen timeout, respuesta máxima 1 MiB y hasta 500 dispositivos. Un fallo conserva
+  el último inventario con estado desconocido, código seguro y fecha del último éxito. Hay backoff
+  hasta 900 s. Si el archivo local es inválido, se desactiva la integración y DDNS sigue funcionando.
+- En cada dispositivo fija ID único, MAC, IP LAN esperada, broadcast, puerto UDP y puerto TCP de
+  comprobación. Los permisos manual/automático son `false` por defecto; cambia cada uno de forma
+  explícita. No se aceptan destinos enviados por el navegador.
+- `manual=true` habilita el botón privado. La CLI equivalente es
+  `dyndnsarr-hub command <agent_id> wake_device --resource-id nas`; el token/CA siguen en la configuración.
+- `automatic=true` permite WoL tras arranques posteriores al primero del Agent. Antes comprueba el
+  puerto TCP; si responde no envía UDP. Reserva intento en SQLite antes de enviar y aplica cooldown
+  persistido de al menos 300 s (default 900), incluso ante reinicio o respuesta perdida.
+
+En el Hub activa `DYNDNSARR_HUB_INTEGRATIONS_ENABLED=true`, reinicia y abre `/admin/integrations`.
+El Hub recoge snapshots cada 15 s con TLS/token; el navegador solo lee la caché. Un Agent antiguo
+sin `/internal/v1/integrations` muestra inventario no disponible y conserva su DDNS/estado habitual.
+
+Estados de inventario: `known` acredita conocimiento (incluida una concesión DHCP), `likely_active`
+una consulta DNS en los últimos 300 s, `stale` actividad anterior y `unknown` falta de evidencia
+actual. Solo la conexión TCP positiva de un dispositivo autorizado da `active`. Una concesión no
+prueba conexión, ni un TCP fallido demuestra apagado. WoL distingue `sent`, `booting`, `reachable`
+y `unconfirmed`; la ventana de arranque por defecto es 180 s. Comprueba BIOS/NIC, VLAN/broadcast y
+el puerto real en tu hardware; el software no puede garantizar el encendido.
+
+### 10.3 SMTP, webhooks y Slack
+
+Copia [alerts.example.toml](../apps/hub/config/alerts.example.toml) al volumen protegido del Hub
+(por ejemplo con `docker compose cp alerts.toml hub:/data/alerts.toml`, como usuario propietario del
+volumen), fija `DYNDNSARR_HUB_ALERTS_FILE=/data/alerts.toml` y reinicia. Para habilitar SMTP descomenta
+su sección y añade `smtp` a los canales de las reglas. Sin archivo no hay alertas.
+
+- URL webhook por `DYNDNSARR_HUB_WEBHOOK_URL` (secreto completo); payload `{"text":"…"}` compatible
+  con Slack. TLS verificado, sin redirects/proxy automático; para receptores LAN se exige allowlist.
+- SMTP implícito TLS por defecto (465), o `starttls=true` con puerto 587 y STARTTLS obligatorio.
+  Usuario/contraseña por `DYNDNSARR_HUB_SMTP_USER` y `DYNDNSARR_HUB_SMTP_PASSWORD`; CA local opcional.
+- Las reglas seleccionan eventos, canales, severidad, espera mínima y supresión. El umbral comienza
+  al recibir el evento en el Hub; no afirma duración durante un hueco sin observaciones. Una
+  recuperación explícita cancela avisos pendientes de esa incidencia y puede emitir el aviso de
+  recuperación. Sin `recovery_events`, un evento es puntual y no se repite indefinidamente.
+- `ip_uncertain` significa fuentes sin consenso, no caída de Internet demostrada; `ip_recovered`
+  registra que vuelven a confirmar IPv4, incluso si no cambió. Pi-hole emite salud al cambiar y WoL
+  registra su resultado. El aviso indica regla/severidad/tipo/fecha/ID, sin volcar el payload.
+- Hasta 10 000 entregas pendientes y diez por pasada, ocho intentos con backoff 30–3600 s;
+  tras agotarlos el resultado es `failed`. La cola/auditoría sobreviven a reinicios. Una respuesta
+  perdida puede duplicar un aviso con el mismo Idempotency-Key/Message-ID; el receptor decide cómo
+  deduplicarlo. No se garantiza notificar si Hub/Agent no pueden ejecutarse o no tienen conectividad.
+
+`/admin/alerts` muestra reglas/entregas y ofrece prueba con sesión, CSRF, origen e ID de operación;
+un doble envío del mismo formulario no crea dos pruebas. No muestra destinos secretos ni errores
+remotos libres. Si el archivo es inválido, la página lo indica y el resto del Hub continúa.
+
+### 10.4 Homarr, exportación y retención
+
+Homarr puede usar su [widget iframe](https://homarr.dev/docs/widgets/iframe/) con
+`https://<hub-publico>/public/homarr`. Configura `DYNDNSARR_HUB_HOMARR_ORIGIN` con el origen HTTPS
+exacto de Homarr y `DYNDNSARR_HUB_APPLICATION_URL` con la URL pública de la aplicación. Amplía el
+proxy de §8 para permitir únicamente los GET de `/public/homarr` y `/public/v1/homarr`.
+El JSON tiene estado, última comprobación, último cambio IP observado y enlace; no lleva IP
+completa, MAC, dispositivos o datos administrativos. No usa cookie/token ni llama a Homarr. Con
+`PUBLIC_ENABLED=false` ambos endpoints dan 404. El admin nunca permite iframe.
+
+Exporta metadatos de diagnóstico mediante `GET /admin/api/v1/export` autenticado: JSON de hasta
+100 eventos por página, filtros `agent`, `record`, `type`, `since`, `until`, `cursor`, `limit`.
+Conserva timestamps de observación/recepción, IDs/tipo/registro, sin payloads/configuración/secretos.
+`next_cursor` permite continuar; conserva los filtros al pasarlo. Usa la sesión del navegador,
+no tokens de servicio ni credenciales en la URL. El JSON se descarga con `no-store`.
+
+`DYNDNSARR_HUB_RETENTION_DAYS` (365 por defecto) controla eventos recibidos, auditoría, entregas
+finales, señales cerradas y comandos finales, con purga de hasta 500 filas por tabla cada pasada.
+Conserva entregas pendientes y comandos activos. Configuraciones activas/deseadas no se purgan.
+Los snapshots son uno por Agent y los límites previos de observaciones/métricas siguen vigentes.
+`DYNDNSARR_HUB_RECEIPTS_DAYS` (400) conserva tombstones de deduplicación tras borrar el historial;
+debe ser al menos la retención del Hub **y cubrir la mayor retención de eventos de sus Agents**.
+Fuera de esa ventana, un evento muy antiguo puede volver a considerarse nuevo. El Agent mantiene
+su retención existente: los eventos, incluidos pendientes del outbox, expiran según `events_days`.
+
+### 10.5 Comprobación en la instalación real
+
+1. Tras backup y upgrade Agent → Hub, verifica healthchecks, reinicio, login y persistencia.
+2. Con Pi-hole v6 propio confirma nombres/IP/MAC/concesiones solo en privado y consulta satisfecha;
+   interrumpe la integración y comprueba que DDNS sigue y el inventario envejece a desconocido.
+3. En un equipo de prueba con permisos manuales, envía WoL, repite el formulario y reinicia el Agent:
+   comprueba cooldown, resultado incierto y accesibilidad por el puerto configurado. Habilita auto
+   solo cuando conozcas su comportamiento tras reinicio. No apaga ni reinicia dispositivos.
+4. Prueba SMTP/webhook propios, interrumpe el receptor y verifica reintento/recuperación y auditoría.
+5. Revisa dispositivos/alertas en móvil/escritorio y temas; exporta una página y verifica ausencia de
+   secretos. Incrusta el widget en Homarr y comprueba que desactivar lo público lo apaga.
+
+Estas pruebas con hardware, credenciales y configuración del servidor las realiza su administrador.
+La validación automática usa servicios falsos/TLS local y no envía WoL o avisos a destinos reales.

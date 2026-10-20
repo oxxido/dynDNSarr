@@ -25,11 +25,13 @@ class StoredCommand:
     status: str
     finished_at: str | None
     result: dict[str, Any] | None
+    resource_id: str | None = None
 
 
 _VERSION_COLUMNS = "version, content_hash, content, applied_at"
 _COMMAND_COLUMNS = (
-    "command_id, type, requested_by, received_at, expires_at, status, finished_at, result"
+    "command_id, type, requested_by, received_at, expires_at, status, finished_at, result, "
+    "resource_id"
 )
 
 
@@ -54,7 +56,7 @@ def delete_versions(conn: sqlite3.Connection) -> int:
 
 
 def _command(row: tuple) -> StoredCommand:
-    return StoredCommand(*row[:7], json.loads(row[7]) if row[7] else None)
+    return StoredCommand(*row[:7], json.loads(row[7]) if row[7] else None, row[8])
 
 
 def insert_command(
@@ -65,10 +67,11 @@ def insert_command(
     received_at: datetime,
     expires_at: str,
     status: str = "received",
+    resource_id: str | None = None,
 ) -> None:
     conn.execute(
-        f"INSERT INTO commands ({_COMMAND_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)",
-        (command_id, type, requested_by, iso(received_at), expires_at, status),
+        f"INSERT INTO commands ({_COMMAND_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?)",
+        (command_id, type, requested_by, iso(received_at), expires_at, status, resource_id),
     )
 
 

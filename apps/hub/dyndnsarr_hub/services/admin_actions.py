@@ -45,9 +45,30 @@ def prepare(conn, session, action, data, settings, now):
     value = private_repo.snapshot(conn, agent_id) if agent_id else {}
     if action == "command":
         kind = data.get("type")
-        if kind not in ("check_dns", "sync_ddns"):
+        if kind not in ("check_dns", "sync_ddns", "wake_device"):
             raise ActionError("Comando no autorizado")
         status = private_repo.status_model(value)
+        if kind == "wake_device":
+            if not settings.integrations_enabled:
+                raise ActionError("La recogida de integraciones está desactivada", 409)
+            import json
+
+            from dyndnsarr_shared.integrations import IntegrationSnapshot
+
+            cached = conn.execute(
+                "SELECT content,refreshed_at,error_code FROM integration_cache WHERE agent_id=?",
+                (agent_id,),
+            ).fetchone()
+            if (
+                not cached
+                or not cached[0]
+                or cached[2]
+                or (now - parse_instant(cached[1])).total_seconds() > 180
+            ):
+                raise ActionError("Inventario no disponible o antiguo", 409)
+            snapshot = IntegrationSnapshot.model_validate(json.loads(cached[0]))
+            if not any(d.id == data.get("resource_id") and d.manual for d in snapshot.targets):
+                raise ActionError("Dispositivo no autorizado", 403)
         if kind == "sync_ddns" and (
             status is None or not any(r.mode == "managed" for r in status.records)
         ):
@@ -61,6 +82,7 @@ def prepare(conn, session, action, data, settings, now):
             f"admin:{session.user_id}",
             now,
             iso(now + timedelta(minutes=5)),
+            resource_id=data.get("resource_id"),
         )
     elif action == "config":
         if not value.get("config") or value.get("config_error"):
@@ -128,7 +150,7 @@ def prepare(conn, session, action, data, settings, now):
 
 async def execute(conn, session, action, data, settings, transport=None):
     allowed = {
-        "command": {"type"},
+        "command": {"type", "resource_id"},
         "config": {"content", "desired_version", "active_version", "active_hash"},
         "resend": {"desired_version"},
         "command-refresh": {"command_id"},
@@ -181,6 +203,7 @@ async def execute(conn, session, action, data, settings, transport=None):
                             type=command.type,
                             requested_by=command.requested_by,
                             expires_at=command.expires_at,
+                            resource_id=command.resource_id,
                         )
                         reply = await control.send_command(conn, client, request, agent_id)
                     code = reply.error_code or reply.api_error

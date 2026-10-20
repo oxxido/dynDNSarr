@@ -417,6 +417,7 @@ def _command(
             type=args.type,
             requested_by="admin:cli",
             expires_at=iso(now + timedelta(seconds=args.ttl)),
+            resource_id=args.resource_id,
         )
     except ValidationError:
         raise CliError("Tipo de comando no válido.") from None
@@ -432,6 +433,7 @@ def _command(
                 request.requested_by,
                 now,
                 request.expires_at,
+                resource_id=request.resource_id,
             )
         print(f"Comando {request.command_id} creado.")
         reply = _call_agent(
@@ -557,9 +559,10 @@ def run(argv: Sequence[str], transport: httpx.AsyncBaseTransport | None = None) 
     show.add_argument("agent_id")
     status = sub.add_parser("agent-status", help="consulta health y status al Agent")
     status.add_argument("agent_id")
-    command = sub.add_parser("command", help="pide un comando al Agent (check_dns, sync_ddns)")
+    command = sub.add_parser("command", help="pide check_dns, sync_ddns o wake_device al Agent")
     command.add_argument("agent_id")
     command.add_argument("type")
+    command.add_argument("--resource-id", help="ID local del dispositivo para wake_device")
     command.add_argument("--ttl", type=int, default=300, help="segundos de validez (300)")
     shown = sub.add_parser("command-show", help="muestra el estado de un comando")
     shown.add_argument("command_id")

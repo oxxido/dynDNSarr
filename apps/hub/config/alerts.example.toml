@@ -1,0 +1,55 @@
+# Archivo local del Hub. URL webhook y credenciales SMTP exclusivamente por entorno.
+[webhook]
+# Vacío permite solo direcciones públicas. Para receptor LAN: allowlist explícita y mínima.
+networks = []
+# ca_file = "/data/webhook-ca.pem"
+
+# SMTP opcional: TLS implícito (465) o STARTTLS obligatorio (587).
+# [smtp]
+# host = "smtp.example.com"
+# port = 465
+# starttls = false
+# sender = "dyndnsarr@example.com"
+# recipients = ["admin@example.com"]
+# networks = []
+
+[[rules]]
+id = "dns"
+events = ["dns_mismatch", "dns_update_failed", "dns_verification_failed"]
+recovery_events = ["dns_verified"]
+channels = ["webhook"]
+severity = "critical"
+threshold_seconds = 120
+suppress_seconds = 3600
+
+[[rules]]
+id = "ipv4"
+events = ["ip_uncertain"]
+recovery_events = ["ip_recovered"]
+channels = ["webhook"]
+severity = "warning"
+threshold_seconds = 60
+suppress_seconds = 3600
+
+[[rules]]
+id = "ip-change"
+events = ["ip_changed"]
+channels = ["webhook"]
+severity = "info"
+threshold_seconds = 0
+suppress_seconds = 900
+
+[[rules]]
+id = "pihole"
+events = ["integration_failed"]
+recovery_events = ["integration_recovered"]
+channels = ["webhook"]
+severity = "warning"
+threshold_seconds = 300
+suppress_seconds = 3600
+
+[[rules]]
+id = "wake"
+events = ["wake_completed"]
+channels = ["webhook"]
+severity = "info"

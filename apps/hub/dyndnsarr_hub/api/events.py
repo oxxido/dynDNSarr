@@ -119,6 +119,10 @@ async def post_events(agent_id: str, request: Request):
     with transaction(db):
         new = events_repo.insert_events(db, accepted, now)
         events_handlers.handle_new_events(db, new, now)
+        from dyndnsarr_hub.db import alerts_repo
+
+        for event in new:
+            alerts_repo.observe(db, request.app.state.alert_config, event, now)
         agents_repo.touch_last_seen(db, agent_id, now)
     logger.info(
         "events_received",

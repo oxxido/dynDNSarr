@@ -655,3 +655,69 @@ def test_admin_policy_persists_and_rejected_monitoring_only_sync_has_no_effect(t
             assert private_repo.snapshot(w.hub, AGENT_ID)["status_error"] is None
 
     asyncio.run(go())
+
+
+def test_admin_wake_device_uses_agent_policy_and_idempotence(tmp_path):
+    from dyndnsarr_agent.integrations.config import IntegrationConfig
+    from dyndnsarr_agent.integrations.worker import IntegrationWorker
+    from dyndnsarr_hub.services.maintenance import refresh_integrations
+
+    async def go():
+        async with world(tmp_path) as w, admin_web(w) as web:
+            sent = []
+            w.hub_app.state.settings.integrations_enabled = True
+
+            async def check(_):
+                return False
+
+            config = IntegrationConfig(
+                devices=[
+                    dict(
+                        id="nas",
+                        name="private-device-canary",
+                        ip="192.168.1.10",
+                        mac="00:11:22:33:44:55",
+                        broadcast="192.168.1.255",
+                        manual=True,
+                    )
+                ]
+            )
+            worker = IntegrationWorker(
+                w.agent, config, None, check=check, send=lambda d: sent.append(d.id)
+            )
+            w.agent_app.state.executor._integrations = worker
+            await worker.refresh()
+            await refresh_integrations(
+                w.hub, w.hub_app.state.settings, httpx.ASGITransport(app=w.agent_app)
+            )
+            assert (await web.get("/admin/integrations")).status_code == 200
+            assert "private-device-canary" in (await web.get("/admin/api/v1/devices")).text
+            body = web_operation(w, web, "command", type="wake_device", resource_id="nas")
+            response = await web.post("/admin/api/v1/command", json=body)
+            assert response.status_code == 200
+            duplicate = await web.post("/admin/api/v1/command", json=body)
+            assert duplicate.json()["duplicate"]
+            await w.agent_app.state.executor.join()
+            assert sent == ["nas"]
+            denied = web_operation(w, web, "command", type="wake_device", resource_id="unknown")
+            assert (await web.post("/admin/api/v1/command", json=denied)).status_code == 403
+            denied = web_operation(w, web, "command", type="wake_device", resource_id="nas")
+            assert (
+                await web.post(
+                    "/admin/api/v1/command", json=denied, headers={"X-CSRF-Token": "wrong"}
+                )
+            ).status_code == 403
+            for route in ("/", "/public/v1/status", "/public/homarr", "/public/v1/homarr"):
+                text = (await web.get(route)).text
+                assert "private-device-canary" not in text and "00:11:22:33:44:55" not in text
+            public = (await web.get("/public/homarr")).headers["content-security-policy"]
+            assert "frame-ancestors 'none'" in public
+            await w.deliver()
+            assert (
+                w.hub.execute("SELECT count(*) FROM events WHERE type='wake_completed'").fetchone()[
+                    0
+                ]
+                == 1
+            )
+
+    asyncio.run(go())
