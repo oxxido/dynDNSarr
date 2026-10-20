@@ -67,7 +67,10 @@ def _replace_owned(servers, server_id, desired):
     """Preserva todos los servidores y rutas ajenos; rechaza capturas/conflictos de host."""
     value = copy.deepcopy(servers)
     server = value.get(server_id, {}) if isinstance(value, dict) else {}
-    if server.get("listen") != [":443"] or server.get("automatic_https", {}).get("disable"):
+    if server.get("listen") != [":443"] or any(
+        server.get("automatic_https", {}).get(flag)
+        for flag in ("disable", "disable_certificates", "disable_redirects")
+    ):
         raise GatewayError("https_server_required")
     existing = server.get("routes", [])
     owned = [r for r in existing if r.get("@id") == "dyndnsarr"]

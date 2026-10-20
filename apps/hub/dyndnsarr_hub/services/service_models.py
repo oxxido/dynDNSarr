@@ -15,6 +15,7 @@ from dyndnsarr_shared.outbound import allowed_address, validate_url
 
 Id = Annotated[str, Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}$")]
 Domain = Annotated[str, Field(max_length=253)]
+DeviceId = Annotated[str, Field(pattern=r"^[a-zA-Z0-9_.:-]{1,128}$")]
 Port = Annotated[int, Field(strict=True, ge=1, le=65535)]
 
 
@@ -55,7 +56,7 @@ class DnsAction(AgentQuery):
 
 class WakeAction(AgentQuery):
     operation_id: UUID
-    device_id: Id
+    device_id: DeviceId
 
 
 class OperationQuery(Model):
@@ -126,7 +127,7 @@ class Grants(Model):
     actions: Annotated[list[Literal[tuple(TOOLS)]], Field(max_length=32)]
     agents: Annotated[list[AgentId], Field(max_length=32)] = []
     domains: Annotated[list[Domain], Field(max_length=100)] = []
-    devices: Annotated[list[Id], Field(max_length=100)] = []
+    devices: Annotated[list[DeviceId], Field(max_length=100)] = []
     destinations: Annotated[list[Id], Field(max_length=100)] = []
     ports: Annotated[list[Port], Field(max_length=100)] = []
 

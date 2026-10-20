@@ -485,3 +485,43 @@ def test_command_completion_updates_operation_and_audit_once_from_events(world):
         ).fetchall()
     )
     assert rows == [("client:test", "failed", "remote_error")]
+
+
+def test_pihole_device_ids_can_be_delegated_and_inventory_is_filtered(world):
+    client, app, _, _ = world
+
+    def seed():
+        content = {
+            "observed_at": iso(utc_now()),
+            "pihole": "ok",
+            "devices": [
+                {
+                    "id": "pihole:192.168.1.20",
+                    "name": "Allowed",
+                    "ip": "192.168.1.20",
+                    "state": "active",
+                },
+                {
+                    "id": "pihole:192.168.1.21",
+                    "name": "Hidden",
+                    "ip": "192.168.1.21",
+                    "state": "active",
+                },
+            ],
+        }
+        app.state.db.execute(
+            "INSERT INTO integration_cache VALUES (?,?,?,NULL)",
+            ("home", json.dumps(content), iso(utc_now())),
+        )
+        return services_repo.add_client(
+            app.state.db,
+            "devices",
+            Grants(actions=["list_devices"], agents=["home"], devices=["pihole:192.168.1.20"]),
+            utc_now(),
+        )
+
+    client.headers["Authorization"] = "Bearer " + client.portal.call(seed)
+    response = call(client, "list_devices", agent_id="home")
+    assert response.json()["stale"] is False
+    assert [d["id"] for d in response.json()["devices"]] == ["pihole:192.168.1.20"]
+    assert "Hidden" not in response.text and "192.168.1.21" not in response.text
