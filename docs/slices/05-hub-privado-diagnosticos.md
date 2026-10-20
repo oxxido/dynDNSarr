@@ -1,9 +1,9 @@
 # Slice 5 — Hub privado y diagnósticos
 
-- **Estado:** planificado
+- **Estado:** en implementación
 - **Fase (arquitectura):** 4 ([architecture.md](../architecture.md) §5, §6, §8, §9, §11, §12 Fase 4 y §13 casos 9, 11–13)
 - **Rama:** `slice/05-hub-privado-diagnosticos`
-- **PR:** — (plan local; se abrirá con la ejecución del slice)
+- **PR:** — (implementación local; pendiente de abrir PR tras validación)
 
 ## Objetivo
 
@@ -36,14 +36,14 @@ Referencias de producto: [requirements.md](../requirements.md) DNS-05–07, MON-
 ## Precondiciones y supuestos
 
 - Slice4 fusionado: PR [#6](https://github.com/oxxido/dynDNSarr/pull/6), merge `e7a20c54a8074012ad751b09cffdcd8c085ebe99`, verificado con `gh pr view 6` el 2026-10-20. El `main` local coincide con `origin/main` después de `git fetch origin`.
-- Se planifica la Fase 4 completa en una rama/PR. Los pasos internos permiten commits pequeños; no se adelanta el slice 6 ni se implementa código con este encargo.
+- Se ejecuta la Fase 4 completa en la rama del plan, con commits pequeños y un PR; no se adelanta el slice6. La ejecución fue encargada por el usuario el 2026-10-20.
 - Se parte de un solo administrador con acceso a todos los Agents registrados. Es la opción mínima para la instalación personal actual; no se introduce un modelo de roles.
 - El navegador accede por HTTPS, también en LAN. TLS termina en el proxy externo; el upstream del Hub sigue restringido. Las pruebas usan HTTPS y certificados locales, sin desactivar `Secure` ni la verificación TLS.
 - La referencia visual disponible, [design_docs/index.html](../../design_docs/index.html), solo contiene la landing. Las nuevas pantallas mantienen marca, colores, paneles, tema `Sistema / Claro / Oscuro`, responsive, foco visible y movimiento reducido; no existe una maqueta privada aprobada que haya que reproducir.
 
 ## Decisiones previas
 
-Son propuestas fijadas para ejecutar este slice; las decisiones duraderas se registrarán en ADR al implementar. No se presentan como comportamiento ya disponible.
+Decisiones implementadas: [ADR-0009](../decisions/0009-administracion-web.md) (identidad/control web) y [ADR-0010](../decisions/0010-monitorizacion-privada.md) (diagnóstico/monitorización).
 
 ### D1. Administrador y sesiones
 
@@ -57,7 +57,7 @@ Son propuestas fijadas para ejecutar este slice; las decisiones duraderas se reg
 
 - `/admin/login` es el único acceso de entrada sin autenticar; `/admin/static/*` sirve únicamente assets sin datos. El resto de páginas privadas exige sesión antes de consultar recursos; HTML sin sesión redirige al login y `/admin/api/v1/*` devuelve `401`. Los recursos inexistentes dan `404` solo después de autenticar. No aceptar redirecciones de retorno externas.
 - Todas las mutaciones web, incluidos login y logout, exigen token CSRF ligado a la sesión, en campo oculto o cabecera; falta/error → `403` antes de efectuar operaciones. Comprobar `Origin` contra un origen HTTPS configurado (`DYNDNSARR_HUB_ADMIN_ORIGIN`), con `Referer` como respaldo; no derivarlo de cabeceras de proxy no confiables. `SameSite` es una protección adicional.
-- `Cache-Control: no-store` en login y respuestas privadas, incluidos errores/redirecciones; `Referrer-Policy: no-referrer`, CSP por nonce, `frame-ancestors 'none'`, `nosniff`, autoescape y ausencia de HTML sin escapar para eventos/errores/configuración. Desactivar la documentación automática pública `/docs`, `/redoc` y `/openapi.json` del Hub para no publicar el contrato administrativo.
+- `Cache-Control: no-store` en login y respuestas privadas, incluidos errores/redirecciones; `Referrer-Policy: same-origin` (Chrome envía `Origin: null` en formularios con `no-referrer`, ver evidencia de ejecución), CSP por nonce, `frame-ancestors 'none'`, `nosniff`, autoescape y ausencia de HTML sin escapar para eventos/errores/configuración. Desactivar la documentación automática pública `/docs`, `/redoc` y `/openapi.json` del Hub para no publicar el contrato administrativo.
 - Ningún GET lanza comprobaciones, reenvía comandos ni aplica configuración. Las escrituras de sesión para autenticación/caducidad no son acciones operativas. Un token Agent–Hub no inicia sesión web, y una cookie web no autoriza `/api/v1/agents/*`; esas rutas conservan su autenticación de servicio.
 - Con `PUBLIC_ENABLED=false`, `/`, `/public/*` y `/static/*` siguen dando `404`; `/admin` y sus assets funcionan. Montar assets privados en `/admin/static` sin reabrir `/static`. El código público y sus consultas siguen leyendo únicamente `public_*`, sin importar repositorios privados ni contener sesiones, usuarios o auditoría.
 
@@ -87,7 +87,7 @@ Son propuestas fijadas para ejecutar este slice; las decisiones duraderas se reg
 - Persistir una política global de monitorización en el Hub: antigüedad máxima de observación **900 s**, umbral de `mismatch` crítico **3600 s** y factor de refresco obsoleto **3**, conservando los valores de slice4. Validar valores positivos, factor ≥ 1 y antigüedad máxima al menos igual al mayor intervalo de comprobación conocido; advertir si falta la config de algún Agent. Registrar los cambios, sin reescribir el pasado.
 - Mantener una única regla pura de estado parametrizada para uso público y privado, a partir de proyecciones sin secretos; estado por registro = regla aplicada a ese registro, agregado con `critical > degraded > unknown > healthy`. La capa pública no importa servicios privados. Conservar los casos y bordes de ADR-0007: datos vencidos/ausentes → `unknown`; error definitivo o mismatch persistente → `critical`; incertidumbre/no verificado → `degraded`; consistente → `healthy`.
 - Las muestras se guardan con el instante real de observación y política utilizada. Releer el mismo snapshot no crea otra comprobación satisfactoria ni aumenta contadores: deduplicar por identificadores/timestamps de origen, agente y registro. No convertir cada refresco del Hub en un nuevo check del Agent.
-- Métricas privadas en ventanas exactas de 24 h, 7 d y 30 d: tiempo `healthy/degraded/critical/unknown`, cobertura y porcentaje de tiempo saludable **sobre tiempo conocido**. Cada observación cubre hasta la siguiente, con máximo igual al intervalo de comprobación que tenía el Agent y limitado por la antigüedad configurada; el resto es desconocido. Recortar intervalos a la ventana, sin extenderlos por encima de un fallo explícito de observación ni a través de reinicios/huecos sin datos.
+- Métricas privadas en ventanas exactas de 24 h, 7 d y 30 d: tiempo `healthy/degraded/critical/unknown`, cobertura y porcentaje de tiempo saludable **sobre tiempo conocido**. La evidencia conserva su timestamp original, pero la cobertura empieza cuando se recoge en el Hub y cubre hasta la siguiente, como máximo hasta vencer su intervalo de comprobación y antigüedad configurada; el resto es desconocido. Recortar intervalos a la ventana, sin extenderlos por encima de un fallo explícito de observación ni a través de reinicios/huecos sin datos.
 - Mostrar numerador, denominador y cobertura: 1 h saludable observada dentro de 24 h puede dar 100 % sobre 1 h, con cobertura 4,17 %, nunca «24 h disponibles». Sin tiempo conocido, porcentaje `null`/«Sin datos». Registros nuevos, deshabilitados y eliminados no aportan tiempo saludable fuera de su periodo observado.
 - Separar salud del servicio, resolución DNS observada, estado de las fuentes IPv4 y tiempo desde el último cambio de IP. El proceso muestra su arranque/reinicio, no disponibilidad continua demostrada. No hay un sondeo independiente de Internet: identificar esa métrica como «Sin medición independiente» y no deducir una caída por fallo de fuentes o del enlace Hub–Agent.
 - Incidencia observada = intervalo consecutivo `degraded`/`critical` por agente/registro; `healthy` confirma recuperación, `unknown` corta la evidencia con final desconocido. Mostrar duración observada y recuperación solo cuando hay ambas observaciones, sin rellenar el hueco. Derivar intervalos de las muestras, sin nueva máquina de estados redundante.
@@ -164,3 +164,17 @@ Son propuestas fijadas para ejecutar este slice; las decisiones duraderas se reg
 - `git fetch origin` y `gh pr view 6 --json number,state,mergedAt,mergeCommit,url,headRefName,baseRefName`: PR #6 `MERGED` el 2026-10-20 a las 08:50:41 UTC; `main` y `origin/main` en `e7a20c5`. Árbol limpio al empezar; rama del slice creada desde esa base.
 - Validación documental: 25 enlaces locales existentes en los cuatro documentos afectados, secciones de la plantilla completas, estado del slice coherente con el índice y `git diff --check` sin errores.
 - Solo documentación: sin implementación, instalaciones, cambios de entorno ni pruebas de aplicación. La validación de código, CI y pruebas manuales de este archivo quedan pendientes del encargo de ejecución.
+
+
+**Ejecución, 2026-10-20:**
+
+- Contratos aditivos y lecturas autenticadas en el Agent; configuración efectiva por lista blanca y diagnóstico paginado. Sin modificaciones al ciclo/proveedor ni al contrato existente de status/hash/eventos.
+- Migraciones Hub 0005 (administrador, sesiones, bloqueo, auditoría e idempotencia) y 0006 (política pública numérica, caché y muestras privadas). Upgrade desde 0004 con datos y backup/restauración cubiertos por tests.
+- Panel privado Jinja2 y API de respaldo, sesiones/CSRF/origen, recuperación CLI, servicios compartidos de control, política persistida, historial filtrado y métricas/incidencias con cobertura. La recogida empieza a cubrir tiempo al llegar al Hub; no rellena retrospectivamente caídas. Observaciones identificadas también por timestamp para admitir IDs reutilizados tras purga del Agent.
+- Verificación inicial: 773 pruebas rápidas existentes pasaban antes de implementar. Primera suite rápida ampliada: 802 passed. E2e nuevo de procesos con proxy HTTPS/CA local: login → configuración → comando → Hub apagado (Agent continúa) → reinicio con sesión persistente → logout: passed. Ambos enlaces TLS verificados, sin servicios ni credenciales reales.
+- Verificación dirigida tras ajustes finales de seguridad/UI: 38 passed (sesiones/CSRF, acciones con Agent real, monitorización, paginación y compatibilidad de Agent antiguo). Los POST duplicados conservan ID y una respuesta perdida se reconcilia sin reejecutar; `sync_ddns` solo llama al proveedor para `m.example.com` (managed), nunca para monitored.
+- `scripts/verify-wheels.sh` ampliado y ejecutado desde un entorno limpio: Agent/Hub arrancan, todos los paquetes/PNG/plantillas viajan, login real de prueba y cinco vistas privadas responden. `ruff check`, `ruff format --check`, `bash -n` de scripts y `git diff --check` correctos.
+- Chrome instalado, automatizado con Playwright de QA (solo venv local, sin dependencia nueva de runtime/CI): 20 capturas de las cinco vistas en escritorio/móvil y claro/oscuro, más login; sin desbordamiento horizontal. Navegación contra las apps mediante transporte ASGI interceptado, sin desactivar TLS. Login/logout, campos iniciales de verificación, filas dinámicas y tema Sistema con cambios de preferencia/persistencia comprobados. El e2e separado cubre el proxy HTTPS real con verificación de certificados.
+- Hallazgos corregidos durante QA: Chrome envía `Origin: null` en formularios con política no-referrer (privado cambiado a same-origin manteniendo CSRF y rechazo de null); colisión de `c.update` con el método del diccionario en Jinja2 (acceso por clave para precargar los campos de verificación). Añadidas regresiones automatizadas.
+- Argon2id medido localmente: hash 85,4 ms / verificación 71,2 ms (64 MiB, t=3, p=4; no extrapolar al servidor de despliegue).
+- Suite completa local: **836 passed**, sin skips, en 269,81 s (Python 3.12); los últimos ajustes de cabeceras/errores y precarga del formulario están además cubiertos por las 38 pruebas dirigidas posteriores. Una advertencia de deprecación preexistente de Starlette/TestClient, sin fallos. Pendiente: CI del PR. La comprobación manual §9.5 en la instalación del usuario y cualquier mutación contra DonDominio real siguen a cargo del usuario; no se ejecutaron aquí. La imagen Docker se verifica en CI, sin modificar el servidor Docker local.

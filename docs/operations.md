@@ -1,6 +1,6 @@
 # Operación
 
-Guía de arranque y despliegue (slices 1 a 3b). Variables de configuración: [.env.example](../.env.example).
+Guía de arranque y despliegue (slices 1 a 5). Variables de configuración: [.env.example](../.env.example).
 
 Ambos componentes escuchan por defecto en `127.0.0.1`. Cámbialo solo con un firewall que limite el origen: el Agent no debe ser accesible desde Internet ni por equipos distintos al Hub.
 
@@ -435,3 +435,95 @@ El Agent sigue entregando eventos por la ruta privada de §6 (`hub.example.lan`)
 5. `DYNDNSARR_HUB_PUBLIC_ENABLED=false` y reinicia: `/` y `/public/v1/status` dan 404.
 6. Los cuatro estados se ven con la mascota (verde, naranja, roja y gris) y su cara: sonrisa, boca ondulada, ceño y línea recta. Las pupilas siguen al puntero, la mascota flota sobre su sombra y suben burbujas por detrás. Con «reducir movimiento» en el sistema, nada de eso se mueve.
 7. Los PNG pesan ~1,5 MB cada uno: optimizarlos queda pendiente ([ADR-0008](decisions/0008-animacion-mascota.md)).
+
+## 9. Hub privado (slice5)
+
+### 9.1 Actualización y aprovisionamiento
+
+Actualiza **primero shared + Agent**, después shared + Hub. Los nuevos `GET /internal/v1/config` y `/internal/v1/diagnostics` exigen el mismo token y TLS de §7. Un Agent anterior sigue aportando estado, pero el Hub indica que no dispone de configuración/diagnóstico compatibles y bloquea su edición inicial. No necesita migrar la BD del Agent; el Hub aplica 0005 y 0006 automáticamente. Respalda `hub.db` con la API de backup SQLite (§4), incluidos los datos privados, antes de actualizar.
+
+Define el origen HTTPS real visto por el navegador, sin ruta:
+
+```dotenv
+DYNDNSARR_HUB_ADMIN_ORIGIN=https://dyndnsarr-admin.example.net
+```
+
+En Compose se pasa desde el archivo de entorno del despliegue. Fuera de Docker se define al arrancar el proceso. Reinicia el Hub tras cambiar esta variable. Vacía o ausente, el login responde 503 hasta configurarla; la landing y el Agent continúan funcionando. No se confía en `Host` ni `X-Forwarded-*` para decidir este origen.
+
+Crea el único administrador con una terminal interactiva:
+
+```bash
+docker compose -f apps/hub/compose.yaml exec hub dyndnsarr-hub admin-create admin
+# Fuera de Docker, con el DATA_DIR del Hub:
+# .venv/bin/dyndnsarr-hub admin-create admin
+```
+
+La contraseña se introduce dos veces sin mostrarla: 12–128 caracteres. El usuario admite 1–64 caracteres (`a-z`, `A-Z`, números, `_`, `.`, `-`). No hay contraseña de fábrica, alta por navegador ni credenciales administrativas por entorno. Solo se guarda el hash Argon2id (64 MiB, 3 iteraciones, 4 hilos). Medición local de desarrollo: aproximadamente 85 ms para hash y 71 ms para verificación; mide en el servidor de destino antes de dimensionar recursos.
+
+Recuperación de contraseña o bloqueo:
+
+```bash
+docker compose -f apps/hub/compose.yaml exec hub dyndnsarr-hub admin-password admin
+```
+
+Revoca todas las sesiones, restablece el contador de intentos y audita la recuperación; no cambia el usuario. No pongas contraseñas en argumentos, comandos de shell, archivos del repositorio ni mensajes. La CLI debe apuntar a la misma BD/volumen que el Hub en ejecución.
+
+### 9.2 Publicación y sesiones
+
+La administración empieza en `/admin/login`. Requiere HTTPS también en LAN para que el navegador envíe la cookie `__Host-dyndnsarr_session`: `Secure`, `HttpOnly`, `SameSite=Lax`, ruta `/`, sin `Domain`. Dura como máximo 12 h y caduca tras 30 min sin uso; cerrar sesión o cambiar contraseña la revoca en servidor. Reiniciar el Hub conserva sesiones válidas y sus vencimientos. No se guardan cookies en `localStorage`.
+
+Publica la administración por separado de la landing de §8.3. Ejemplo **para aplicar manualmente** en un proxy Caddy externo ya gestionado:
+
+```caddyfile
+dyndnsarr-admin.example.net {
+    @admin path /admin /admin/*
+    handle @admin {
+        reverse_proxy 127.0.0.1:8000
+    }
+    handle {
+        respond 404
+    }
+}
+```
+
+Ajusta el upstream si el proxy comparte una red Docker; no expongas el puerto HTTP del Hub a Internet ni `/api/v1/agents/*` en este host. El ejemplo no modifica el proxy automáticamente. El host público mantiene su lista blanca de §8.3. El login y el resto de pantallas privadas envían `no-store`, CSP con nonce y `Referrer-Policy: same-origin` (sin referencias a otros orígenes, compatible con formularios y comprobación estricta de `Origin`); `/docs`, `/redoc` y `/openapi.json` ya no se publican en el Hub. `/healthz` conserva el contrato.
+
+Todos los POST (incluidos login/logout) requieren CSRF de la sesión y un origen que coincida con `ADMIN_ORIGIN`; si `Origin` falta se comprueba `Referer`. Un token de servicio no inicia sesión web y la cookie no autoriza la ingestión de eventos. Cinco errores de contraseña en 15 min bloquean nuevos intentos durante 15 min (`429`, `Retry-After`). El contador persiste tras reiniciar, es global para la instalación y no depende de la IP aparente del cliente. Un tercero puede causar un bloqueo temporal: protege el acceso privado desde el proxy y usa la recuperación CLI si procede.
+
+Con `DYNDNSARR_HUB_PUBLIC_ENABLED=false`, `/`, `/public/*` y `/static/*` siguen apagados. `/admin/*`, incluidos sus assets en `/admin/static/*`, funciona de forma independiente.
+
+### 9.3 Pantallas, configuración y acciones
+
+- **Resumen:** estado agregado y por Agent/registro, IPv4 completa con instante de confirmación, último cambio de IP, proceso y enlace/outbox. Un Agent inalcanzable indica `agent_unreachable`, conserva la edad de sus datos y envejece a `unknown`; no acredita que Internet haya caído.
+- **Registros:** modo y proveedor, verificación, estado, error y reintento. `monitored` solo observa; DonDominio sigue siendo el único proveedor implementado.
+- **Historial:** filtros UTC por Agent, registro (incluidos los retirados) y tipo de evento, paginación estable, instantes observado/recibido y origen manual solo si existe correlación con un comando. Los payloads libres no se vuelcan al navegador. La auditoría muestra actor, recurso, ID, aceptación/resultado y códigos seguros; nunca contraseñas, cookies, CSRF, tokens o cuerpos de configuración.
+- **Diagnóstico:** muestras almacenadas por fuente IPv4 y resolver externo, direcciones/errores, aceptación del proveedor y última verificación DNS. «Actualizar diagnóstico» solo consulta la caché del Agent; «Comprobar DNS» envía `check_dns` y produce observaciones nuevas. El Hub no resuelve DNS ni prueba destinos desde el navegador.
+- **Configuración:** parte de la efectiva del Agent, también cuando su versión es 0 (TOML). Edita registros, habilitado/modo/proveedor, frecuencia, fuentes/resolvers, verificación y retención local. Borrar el nombre retira el registro de la propuesta; cambiar explícitamente a `managed` autoriza actualizarlo y requiere credenciales locales. Una configuración inválida conserva la anterior. Las credenciales, `providers`, `hub`, endpoints, tokens y CA siguen en la Raspberry/CLI/entorno y no se editan aquí.
+
+La última configuración **deseada** puede estar pendiente o rechazada; no equivale a la aplicada. Una edición obsoleta da 409 y exige recargar. Un timeout mantiene la versión pendiente; reenviarla conserva versión y hash. Un doble envío del mismo formulario devuelve la operación ya creada; cambiar su contenido reutilizando el ID da 409.
+
+Las acciones tienen alcance de **Agent**, no de un solo registro. `sync_ddns` incluye únicamente `managed` habilitados; no se ofrece sin ellos y el Agent repite la comprobación. Los GET nunca lanzan acciones. El seguimiento del comando diferencia aceptación y ejecución; una respuesta perdida se consulta por el mismo `command_id` o se reconcilia al recibir el evento, sin reejecutar. Los POST web normales redirigen tras éxito; el API de respaldo vive en `/admin/api/v1` y exige la misma sesión y CSRF (no es todavía el API de terceros/MCP).
+
+El refresco periódico de §8 guarda por separado cachés privadas y proyección pública. Las pantallas leen esas cachés y muestran su edad. Se recoge como máximo una página de 100 muestras por Agent y pasada, continuando el cursor en la siguiente; con muchas observaciones la lista/contadores pueden ser parciales. Los errores de las consultas nuevas no impiden proyectar el `status` público disponible. La IP completa nunca se copia a `public_*`.
+
+### 9.4 Estados, cobertura y métricas
+
+La UI permite guardar tres umbrales globales del Hub: antigüedad máxima de observación (900 s por defecto, hasta 86400), mismatch crítico (3600 s, hasta 2592000) y factor de refresco obsoleto (3, rango 1–100). La antigüedad no puede ser menor que el mayor intervalo de comprobación conocido; se avisa si falta la configuración de algún Agent. Los valores sobreviven al reinicio, se auditan y afectan a nuevas evaluaciones públicas y privadas. El historial conserva su política original. Los demás ajustes del proceso/publicación siguen por entorno y requieren reiniciar.
+
+Ventanas: 24 h, 7 d y 30 d. Se muestran duración `healthy/degraded/critical/unknown`, cobertura y porcentaje saludable sobre **tiempo conocido**, con numerador/denominador. Por ejemplo, 1 h saludable en una ventana de 24 h da 100 % sobre 1 h conocida y cobertura 4,17 %; sin tiempo conocido no hay porcentaje.
+
+La evidencia conserva su timestamp original, pero su cobertura empieza al recogerla en el Hub y termina como máximo al vencer el intervalo del Agent (limitado por la antigüedad configurada). No se rellena retrospectivamente una caída del Hub. Una lectura repetida no crea otro check ni prolonga el tiempo disponible. Reinicios, fallos explícitos, registros retirados, datos anteriores a la actualización y huecos quedan desconocidos. Se purgan muestras/observaciones privadas de más de 30 días por lotes acotados; la retención general de eventos/auditoría del Hub corresponde al slice6.
+
+Se distinguen salud del servicio, respuestas de fuentes IPv4 y respuestas de resolvers DNS. Estas últimas métricas miden respuestas observadas, no disponibilidad independiente de Internet ni coincidencia con la IP esperada (que se ve por registro). Los grupos parciales no acreditan éxito. Cada muestra de fuente/resolver cuenta una vez; no se promete un total exhaustivo de comprobaciones del Agent cuando el Hub estuvo apagado o no recogió todas las páginas.
+
+Las incidencias son tramos observados consecutivos degradados/críticos. Solo un estado saludable contiguo confirma recuperación; `unknown` corta la evidencia y deja el final sin recuperación confirmada. Las barras públicas de 7 d conservan su contrato anterior: su cobertura por barras no es el porcentaje privado por duración.
+
+### 9.5 Comprobación manual en la instalación
+
+1. Tras backup y actualización Agent → Hub, configura el origen HTTPS, aprovisiona el administrador y comprueba que una ventana sin sesión no obtiene HTML/JSON privados. La landing pública debe seguir sin IP completa, usuario o tokens.
+2. Inicia sesión, revisa cookie, cierre de sesión y rechazo al reutilizarla. Prueba la recuperación CLI y el bloqueo temporal sin publicar credenciales.
+3. Revisa resumen, registros, diagnóstico, historial y configuración en escritorio/móvil y en Sistema/Claro/Oscuro. Comprueba teclado/foco, persistencia del tema y fechas UTC.
+4. Con un Agent real, espera al refresco o pulsa «Actualizar diagnóstico»; identifica fuentes y resolvers reales, edad de datos, IP completa y distinción aceptación/verificación. Apaga el Agent y comprueba `agent_unreachable` y el paso a desconocido.
+5. Envía un cambio inválido de frecuencia y comprueba el rechazo y conservación de la activa. Envía uno válido y verifica versión/hash/ack; repite el envío para comprobar que no duplica. Ejecuta `check_dns` y consulta su resultado.
+6. Solo con un registro `managed` real de prueba, comprueba `sync_ddns` y que los `monitored` siguen sin escritura. Esta mutación no se ha ejecutado automáticamente contra DonDominio.
+7. Reinicia el Hub: configuración, política y sesiones válidas se conservan; los huecos del uptime no se rellenan. Apaga la landing pública y comprueba que la administración sigue disponible.
