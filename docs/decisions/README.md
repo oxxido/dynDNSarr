@@ -15,3 +15,4 @@ Una decisión que debe sobrevivir a un slice se registra aquí: `NNNN-titulo-cor
 | [0009](0009-administracion-web.md) | Administrador local, sesiones, CSRF, auditoría e idempotencia web |
 | [0010](0010-monitorizacion-privada.md) | Diagnóstico privado, política común de estados y uptime por duración observada |
 | [0011](0011-integraciones-v1.md) | Pi-hole v6, WoL por política, alertas persistentes, Homarr y retención/exportación |
+| [0012](0012-servicios-mcp-caddy.md) | API scoped, MCP stdio, comandos DNS por registro y publicaciones Caddy con revisiones/expiración |

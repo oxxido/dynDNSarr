@@ -230,7 +230,7 @@ class TlsHub:
     `ca_file` es la CA que firma su certificado; `other_ca_file`, una CA que no lo firmó.
     """
 
-    def __init__(self, tmp_path) -> None:
+    def __init__(self, tmp_path, **settings) -> None:
         from dyndnsarr_hub.auth.tokens import generate_token, hash_token
         from dyndnsarr_hub.config import Settings
         from dyndnsarr_hub.db import MIGRATIONS, agents_repo
@@ -256,7 +256,8 @@ class TlsHub:
         cert.private_key_pem.write_to_path(key_file)
         cert.cert_chain_pems[0].write_to_path(cert_file)
 
-        app = create_app(Settings(data_dir=tmp_path / "hub-data"))
+        app = create_app(Settings(data_dir=tmp_path / "hub-data", **settings))
+        self.app = app
         config = uvicorn.Config(
             app,
             host="127.0.0.1",

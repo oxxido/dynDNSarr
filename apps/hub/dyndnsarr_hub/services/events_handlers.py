@@ -10,7 +10,7 @@ from collections.abc import Callable
 from datetime import datetime
 
 from dyndnsarr_hub.clock import parse_instant
-from dyndnsarr_hub.db import control_repo, public_repo
+from dyndnsarr_hub.db import control_repo, public_repo, services_repo
 from dyndnsarr_hub.public.state import ip_suffix
 from dyndnsarr_shared.control import COMMAND_STATUSES
 from dyndnsarr_shared.events import AgentEvent
@@ -52,6 +52,7 @@ def _command_completed(conn: sqlite3.Connection, event: AgentEvent, now: datetim
     control_repo.update_command_from_agent(
         conn, command_id, event.agent_id, status, result if isinstance(result, dict) else None
     )
+    services_repo.record_command_result(conn, command_id, now)
 
 
 def _renewal(conn: sqlite3.Connection, event: AgentEvent, now: datetime) -> None:

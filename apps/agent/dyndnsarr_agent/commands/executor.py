@@ -71,10 +71,8 @@ class CommandExecutor:
         estado sin reejecutar. Lanza `CommandError`."""
         if request.type not in COMMAND_TYPES:
             raise CommandError(422, "unsupported_command", "Comando no soportado")
-        if request.parameters or (request.resource_id and request.type != "wake_device"):
-            raise CommandError(
-                422, "invalid_command", "Este comando no admite parámetros ni resource_id"
-            )
+        if request.parameters:
+            raise CommandError(422, "invalid_command", "Este comando no admite parámetros")
         existing = control_repo.get_command(self._conn, request.command_id)
         if existing is not None:
             if existing.type != request.type or existing.resource_id != request.resource_id:
@@ -87,6 +85,8 @@ class CommandExecutor:
             )
         ):
             raise CommandError(422, "device_not_allowed", "Dispositivo no autorizado")
+        if request.resource_id and request.type in ("check_dns", "sync_ddns"):
+            self._record_config(request.resource_id, request.type)
         now = self._clock()
         expired = ddns_repo.parse_iso(request.expires_at) <= now
         if not expired and self._queue.full():
@@ -116,6 +116,9 @@ class CommandExecutor:
             command_id = await self._queue.get()
             try:
                 await self._execute(command_id)
+            except CommandError as exc:
+                command = control_repo.get_command(self._conn, command_id)
+                self._finish(command, "failed", {"code": exc.code})
             except Exception as exc:
                 # Solo el tipo: el texto de una excepción puede llevar rutas o URLs.
                 logger.error("command_failed", extra={"error_type": type(exc).__name__})
@@ -138,21 +141,32 @@ class CommandExecutor:
             result = await self._integrations.wake(command.resource_id, command.command_id)
             status = "failed" if result.get("code") else "succeeded"
         elif command.type == "check_dns":
-            status, result = await self._check_dns()
+            status, result = await self._check_dns(command.resource_id)
         else:
-            status, result = await self._sync_ddns()
+            status, result = await self._sync_ddns(command.resource_id)
         self._finish(command, status, result)
 
-    async def _check_dns(self) -> tuple[str, dict[str, Any]]:
+    def _record_config(self, name, kind):
+        config = self._holder.config
+        if name is None:
+            return config
+        records = [r for r in config.records if r.name == name and r.enabled]
+        if not records or (kind == "sync_ddns" and records[0].mode != "managed"):
+            raise CommandError(422, "invalid_command", "Registro no autorizado para este comando")
+        return config.model_copy(update={"records": records})
+
+    async def _check_dns(self, name=None) -> tuple[str, dict[str, Any]]:
         holder = self._holder
-        check = await manual.check_dns(self._conn, holder.config, holder.observer, self._clock)
+        check = await manual.check_dns(
+            self._conn, self._record_config(name, "check_dns"), holder.observer, self._clock
+        )
         return "succeeded", {
             "records": {r.name: r.verdict or "no_reference" for r in check.records}
         }
 
-    async def _sync_ddns(self) -> tuple[str, dict[str, Any]]:
+    async def _sync_ddns(self, name=None) -> tuple[str, dict[str, Any]]:
         config, providers, observer = (
-            self._holder.config,
+            self._record_config(name, "sync_ddns"),
             self._holder.providers,
             self._holder.observer,
         )

@@ -18,7 +18,7 @@ Los slices se numeran `slice1`, `slice2`… y corresponden 1:1 a las fases de la
 | slice4 | 3 | Landing pública real (`index.html` → Jinja2, `PublicStatusDTO`) | Ausencia demostrable de IP completa y datos privados |
 | slice5 | 4 | Hub privado y diagnósticos (login, dashboard, historial, uptime) | Operaciones privadas inaccesibles sin login; `monitored` nunca se escribe |
 | slice6 | 5 | Integraciones y release v1.0 (Pi-hole, WoL, alertas, Homarr, retención/exportación, docs de instalación) | Integraciones caídas no bloquean DDNS; instalación limpia reproducible |
-| slice7 | 6 | v1.1 (MCP, Caddy) — posterior, no comprometido | Ver PRD §19 |
+| slice7 | 6 | v1.1: API scoped, MCP stdio y publicaciones Caddy | Permisos revocables, DNS por registro, publicaciones validadas, rollback y caducidad; [slice](docs/slices/07-mcp-caddy.md) |
 
 Estado de cada slice: [docs/slices/README.md](docs/slices/README.md).
 

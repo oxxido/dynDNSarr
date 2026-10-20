@@ -17,7 +17,8 @@ from dyndnsarr_hub.clock import utc_now
 from dyndnsarr_hub.config import Settings
 from dyndnsarr_hub.db import MIGRATIONS, private_repo
 from dyndnsarr_hub.db.state import record_boot
-from dyndnsarr_hub.services import alert_config, maintenance, status_refresher
+from dyndnsarr_hub.services import alert_config, gateway, maintenance, status_refresher
+from dyndnsarr_hub.services.service_models import load_gateway
 from dyndnsarr_shared.db import connect, migrate
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         schema_version = migrate(conn, MIGRATIONS)
         instance_id, boot_count = record_boot(conn)
         app.state.db = conn
+        app.state.gateway_policy = load_gateway(settings.gateway_file)
+        app.state.service_lock = asyncio.Lock()
         try:
             app.state.alert_config = alert_config.load(settings.alerts_file)
         except Exception as exc:
@@ -70,6 +73,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 app.state.agent_transport,
             )
         )
+        gateway_conn = connect(settings.db_path)
+        gateway_task = asyncio.create_task(
+            gateway.run(
+                gateway_conn,
+                app.state.gateway_policy,
+                settings,
+                app.state.service_lock,
+                app.state.gateway_transport,
+            )
+        )
         try:
             yield
         finally:
@@ -80,6 +93,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             with contextlib.suppress(asyncio.CancelledError):
                 await maintenance_task
             maintenance_conn.close()
+            gateway_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await gateway_task
+            gateway_conn.close()
     finally:
         conn.close()
 
@@ -98,6 +115,13 @@ def create_app(settings: Settings) -> FastAPI:
     # Transporte del cliente que consulta a los Agents: solo lo sustituyen las pruebas.
     app.state.agent_transport = None
     app.middleware("http")(protect)
+    from dyndnsarr_hub.api.services import protect as service_protect
+    from dyndnsarr_hub.api.services import router as service_router
+
+    app.middleware("http")(service_protect)
+    app.state.gateway_transport = None
+    if settings.services_enabled:
+        app.include_router(service_router)
     from dyndnsarr_hub.api.admin import router as admin_router
 
     app.include_router(admin_router)

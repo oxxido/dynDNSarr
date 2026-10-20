@@ -502,7 +502,61 @@ def _admin_password(settings, args):
     return 0
 
 
+def _service_client(settings, args):
+    from pydantic import TypeAdapter
+
+    from dyndnsarr_hub.db import auth_repo, services_repo
+    from dyndnsarr_hub.services.service_models import Grants, Id
+
+    if args.command != "client-list":
+        try:
+            TypeAdapter(Id).validate_python(args.client_id)
+        except ValidationError:
+            raise CliError("ID de cliente no válido") from None
+    grants = None
+    if args.command == "client-add":
+        try:
+            grants = Grants.model_validate(tomllib.loads(args.file.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            raise CliError("Archivo de permisos no válido; no se ha creado el cliente") from None
+    conn = _open_db(settings)
+    try:
+        if args.command == "client-add":
+            try:
+                with transaction(conn):
+                    token = services_repo.add_client(conn, args.client_id, grants, utc_now())
+            except sqlite3.IntegrityError:
+                raise CliError("El cliente ya existe; revócalo y utiliza otro ID") from None
+            print("Token de servicio (se muestra una sola vez):")
+            print(token)
+        elif args.command == "client-revoke":
+            with transaction(conn):
+                changed = conn.execute(
+                    "UPDATE service_clients SET revoked_at=? WHERE id=? AND revoked_at IS NULL",
+                    (iso(utc_now()), args.client_id),
+                )
+                if changed.rowcount == 0:
+                    raise CliError("Cliente no encontrado o ya revocado")
+                auth_repo.audit(
+                    conn, utc_now(), "cli", "client_revoke", args.client_id, result="succeeded"
+                )
+            print("Cliente revocado")
+        else:
+            for client_id, created, revoked in conn.execute(
+                "SELECT id,created_at,revoked_at FROM service_clients ORDER BY id"
+            ):
+                print(
+                    f"{client_id}  creado: {created}  estado: {'revocado' if revoked else 'activo'}"
+                )
+    finally:
+        conn.close()
+    return 0
+
+
 _COMMANDS = {
+    "client-add": _service_client,
+    "client-revoke": _service_client,
+    "client-list": _service_client,
     "agent-add": _agent_add,
     "agent-rotate": _agent_rotate,
     "agent-revoke": _agent_revoke,
@@ -567,6 +621,12 @@ def run(argv: Sequence[str], transport: httpx.AsyncBaseTransport | None = None) 
     shown = sub.add_parser("command-show", help="muestra el estado de un comando")
     shown.add_argument("command_id")
     shown.add_argument("--refresh", action="store_true", help="pregunta antes al Agent")
+    client_add = sub.add_parser("client-add", help="emite token scoped desde permisos TOML")
+    client_add.add_argument("client_id")
+    client_add.add_argument("file", type=Path)
+    client_revoke = sub.add_parser("client-revoke", help="revoca una identidad API/MCP")
+    client_revoke.add_argument("client_id")
+    sub.add_parser("client-list", help="lista identidades API/MCP sin tokens ni hashes")
     args = parser.parse_args(argv)
     if args.command in (None, "serve"):
         serve()

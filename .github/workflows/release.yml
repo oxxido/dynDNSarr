@@ -49,4 +49,4 @@ jobs:
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker push "$RELEASE_IMAGE"
-          gh release create "$GITHUB_REF_NAME" dist/*.whl dist/SHA256SUMS --verify-tag --title "DynDNSarr $GITHUB_REF_NAME" --notes-file docs/release-v1.0.0.md
+          gh release create "$GITHUB_REF_NAME" dist/*.whl dist/SHA256SUMS --verify-tag --title "DynDNSarr $GITHUB_REF_NAME" --notes-file "docs/release-${GITHUB_REF_NAME}.md"

@@ -346,3 +346,36 @@ def test_after_a_restart_unfinished_commands_become_interrupted_and_never_rerun(
     row, new = second.executor.submit(received)
     assert new is False and row.status == "failed"
     assert second.provider.calls == []
+
+
+def test_record_scoped_sync_never_touches_other_managed_records(world):
+    extra = world.holder.config.records[0].model_copy(update={"name": "other.example.com"})
+    world.holder.config = world.holder.config.model_copy(
+        update={"records": [*world.holder.config.records, extra]}
+    )
+    request = world.request("sync_ddns", resource_id=NAME)
+    go(world.run(request))
+    assert world.provider.calls == [(NAME, IP)]
+    assert {name for kind, name in world.observer.log} == {NAME}
+    assert control_repo.get_command(world.conn, request.command_id).status == "succeeded"
+
+
+def test_record_scoped_check_accepts_monitored_but_sync_rejects_it(world):
+    request = world.request("check_dns", resource_id="watch.example.com")
+    go(world.run(request))
+    assert {name for kind, name in world.observer.log} == {"watch.example.com"}
+    assert world.provider.calls == []
+    with pytest.raises(CommandError, match="Registro no autorizado"):
+        world.executor.submit(world.request("sync_ddns", resource_id="watch.example.com"))
+    assert world.provider.calls == []
+
+
+def test_record_scope_is_validated_again_when_configuration_changes(world):
+    request = world.request("sync_ddns", resource_id=NAME)
+    world.executor.submit(request)
+    world.holder.config = world.holder.config.model_copy(update={"records": []})
+    go(world.run(request))
+    assert world.provider.calls == []
+    assert control_repo.get_command(world.conn, request.command_id).result == {
+        "code": "invalid_command"
+    }

@@ -147,3 +147,27 @@ with TestClient(create_app(Settings(data_dir=Path(sys.argv[1])))) as client:
     assert client.get('/public/v1/homarr').json()['state'] == 'unknown'
 print('OK: integraciones y Homarr incluidos en wheels')
 PYTEST
+
+# Slice7: CLI/SDK, catálogo y migración de identidades desde wheels limpios.
+"$work/venv/bin/python" - "$work/services-wheel" <<'PYTEST'
+import sys
+from pathlib import Path
+from fastapi.testclient import TestClient
+from dyndnsarr_hub.config import Settings
+from dyndnsarr_hub.main import create_app
+from dyndnsarr_hub.clock import utc_now
+from dyndnsarr_hub.db import services_repo
+from dyndnsarr_hub.services.service_models import Grants
+from dyndnsarr_hub.mcp_server import create_server
+with TestClient(create_app(Settings(data_dir=Path(sys.argv[1]), services_enabled=True))) as client:
+    token = client.portal.call(lambda: services_repo.add_client(client.app.state.db, "wheel",
+        Grants(actions=["list_publications"]), utc_now()))
+    response = client.get('/service/v1/tools', headers={"Authorization": "Bearer " + token})
+    assert response.status_code == 200 and len(response.json()['tools']) == 1
+    assert client.portal.call(lambda: client.app.state.db.execute(
+        "SELECT count(*) FROM publication_revisions").fetchone()[0]) == 0
+assert create_server(None).name == "DynDNSarr"
+print('OK: API scoped, MCP y migración de publicaciones incluidos en wheels')
+PYTEST
+DYNDNSARR_HUB_MCP_TOKEN= "$work/venv/bin/dyndnsarr-mcp" </dev/null >"$work/mcp.out" 2>"$work/mcp.err" && exit 1 || test "$?" = 1
+test ! -s "$work/mcp.out"
