@@ -112,3 +112,10 @@ API; recargar un Caddyfile estático puede perderlos. Actualizar Agent para DNS 
   la validación de Caddy/ACME, conectividad y políticas en producción queda para el operador
   según [operaciones §11.5](../operations.md#115-comprobación-manual-en-la-instalación).
 - No se modificó `.env`, servidor, proxy ni integraciones reales. Sin merge, despliegue o tag.
+
+- Primera CI: imagen Docker correcta y suite Python 3.12 correcta; Python 3.11 detectó un
+  fallo temporal preexistente en `test_show_domains_adds_only_the_record_name`: los dos seeds
+  se ejecutaron a ambos lados de un segundo y comparaban fechas distintas. Se fija únicamente
+  el reloj de ese test (seed y endpoint) para comparar los mismos datos. Sin cambio de producto.
+- Tras fijar el reloj: **43 passed** en `test_hub_public_api.py` (5,69 s); lint y formato
+  correctos. La corrección se entrega en un commit separado; CI completa vuelve a ejecutarse.

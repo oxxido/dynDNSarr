@@ -201,7 +201,10 @@ def test_no_private_value_reaches_the_json_nor_the_headers(tmp_path):
     assert RECORD not in text
 
 
-def test_show_domains_adds_only_the_record_name(tmp_path):
+def test_show_domains_adds_only_the_record_name(tmp_path, monkeypatch):
+    fixed = now()
+    monkeypatch.setitem(globals(), "utc_now", lambda: fixed)
+    monkeypatch.setattr("dyndnsarr_hub.api.public.utc_now", lambda: fixed)
     with hub(tmp_path / "a", healthy_seed) as client:
         hidden = get(client)
     with hub(tmp_path / "b", healthy_seed, public_show_domains=True) as client:
