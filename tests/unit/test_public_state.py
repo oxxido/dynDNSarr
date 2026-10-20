@@ -167,3 +167,23 @@ def test_sample_at_now_goes_to_the_last_bucket_and_outside_the_window_is_ignored
     )
     assert buckets[83] == "healthy"
     assert buckets.count("unknown") == 83
+
+
+def test_custom_policy_changes_freshness_mismatch_and_refresh_thresholds():
+    from dyndnsarr_hub.public.state import MonitoringPolicy
+
+    policy = MonitoringPolicy(
+        observation_max_seconds=1200, critical_mismatch_seconds=60, stale_refresh_factor=5
+    )
+    older_observation = projection(
+        last_check_at=NOW - timedelta(seconds=1000),
+        public_ip_confirmed_at=NOW - timedelta(seconds=1000),
+    )
+    assert derive_state(older_observation, NOW, REFRESH) == "unknown"
+    assert derive_state(older_observation, NOW, REFRESH, policy) == "healthy"
+    mismatch = projection([record(verification="mismatch", since=NOW - timedelta(seconds=100))])
+    assert derive_state(mismatch, NOW, REFRESH) == "degraded"
+    assert derive_state(mismatch, NOW, REFRESH, policy) == "critical"
+    older_refresh = projection(refreshed_at=NOW - timedelta(seconds=4 * REFRESH))
+    assert derive_state(older_refresh, NOW, REFRESH) == "unknown"
+    assert derive_state(older_refresh, NOW, REFRESH, policy) == "healthy"

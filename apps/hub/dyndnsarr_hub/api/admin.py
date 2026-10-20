@@ -194,6 +194,8 @@ def context(request, page):
         "page": page,
         "agents": agents,
         "agent": agent,
+        "selected_agent": selected,
+        "filters": dict(request.query_params),
         "tokens": tokens,
         "policy": asdict(public_repo.monitoring_policy(conn)),
         "hours": hours,
