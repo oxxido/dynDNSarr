@@ -1,6 +1,6 @@
 # Slice 5 — Hub privado y diagnósticos
 
-- **Estado:** en revisión
+- **Estado:** fusionado
 - **Fase (arquitectura):** 4 ([architecture.md](../architecture.md) §5, §6, §8, §9, §11, §12 Fase 4 y §13 casos 9, 11–13)
 - **Rama:** `slice/05-hub-privado-diagnosticos`
 - **PR:** [#7](https://github.com/oxxido/dynDNSarr/pull/7)
@@ -179,4 +179,8 @@ Decisiones implementadas: [ADR-0009](../decisions/0009-administracion-web.md) (i
 - Argon2id medido localmente: hash 85,4 ms / verificación 71,2 ms (64 MiB, t=3, p=4; no extrapolar al servidor de despliegue).
 - Suite completa local: **836 passed**, sin skips, en 269,81 s (Python 3.12); los últimos ajustes de cabeceras/errores y precarga del formulario están además cubiertos por las 38 pruebas dirigidas posteriores. Una advertencia de deprecación preexistente de Starlette/TestClient, sin fallos. Resultados de CI (Python 3.11/3.12 e imagen Docker) en [los checks del PR #7](https://github.com/oxxido/dynDNSarr/pull/7/checks). La comprobación manual §9.5 en la instalación del usuario y cualquier mutación contra DonDominio real siguen a cargo del usuario; no se ejecutaron aquí. La imagen Docker se verifica en CI, sin modificar el servidor Docker local.
 
-- Entrega: rama subida a `origin/slice/05-hub-privado-diagnosticos`, PR [#7](https://github.com/oxxido/dynDNSarr/pull/7) abierto contra `main`, sin merge. Verificación documental: 73 enlaces locales existentes y diff sin errores. La revisión de CI y del PR se consulta en sus checks; la prueba manual de la instalación sigue pendiente según §9.5.
+- Entrega inicial: rama subida a `origin/slice/05-hub-privado-diagnosticos`, PR [#7](https://github.com/oxxido/dynDNSarr/pull/7) abierto contra `main`, sin merge. Verificación documental: 73 enlaces locales existentes y diff sin errores. La revisión de CI y del PR se consulta en sus checks; la prueba manual de la instalación sigue pendiente según §9.5.
+- Revisión final del historial: selector «Todos los Agents» coherente con la consulta sin filtro y conservación de fechas/tipo consultados. Regresión de recorrido privado/historial: 11 passed; reglas públicas con umbrales personalizados de antigüedad/mismatch/refresco: 31 passed. CI del commit final en los checks del PR #7.
+
+- **Merge de la implementación principal verificado:** PR #7 fusionado por `oxxido` el 2026-10-20 a las 09:43:31 UTC, commit `aa66d0391c316ed6e6d82e2910ba8af7b49ba55a`. CI del head fusionado `127fdbe`: **837 passed en Python 3.11 y 3.12**, wheels y `hub-image` correctos ([ejecución](https://github.com/oxxido/dynDNSarr/actions/runs/39402248036)).
+- **Ajuste final posterior al merge:** `fix/05-filtros-historial`, creada desde `main` actualizado (`aa66d03`). Contiene exclusivamente coherencia/persistencia de filtros del historial, su regresión y prueba de umbrales personalizados; no cambia migraciones ni DDNS. Pruebas locales: 11 de integración + 31 de reglas; Chrome repetido tras el ajuste, correcto. Entregado en el PR complementario [#8](https://github.com/oxxido/dynDNSarr/pull/8), contra `main`; evidencia de CI en [sus checks](https://github.com/oxxido/dynDNSarr/pull/8/checks). El agente no fusiona PRs sin autorización.
