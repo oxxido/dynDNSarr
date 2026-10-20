@@ -359,3 +359,50 @@ def test_a_malformed_command_is_400_and_an_unknown_id_404(agent):
     assert client.post(url("/commands"), headers=AUTH, content=b"{}").status_code == 400
     missing = client.get(url(f"/commands/{uuid.uuid4()}"), headers=AUTH)
     assert (missing.status_code, missing.json()["code"]) == (404, "not_found")
+
+
+@pytest.mark.parametrize("path", ["/config", "/diagnostics"])
+def test_new_queries_require_the_service_token(agent, path):
+    client, _settings, _app = agent
+    assert client.get(url(path)).status_code == 401
+    assert client.get(url(path), headers=AUTH).status_code == 200
+
+
+def test_effective_config_excludes_local_sections_and_secrets(agent):
+    client, _settings, _app = agent
+    value = client.get(url("/config"), headers=AUTH).json()
+    assert value["version"] == 0
+    assert value["content"]["records"][0]["mode"] == "monitored"
+    assert value["content"]["dns"]["resolvers"] == ["1.1.1.1"]
+    assert set(value["content"]) == {
+        "check_interval_seconds",
+        "ip_sources",
+        "dns",
+        "retention",
+        "update",
+        "records",
+    }
+    for canary in [API_TOKEN, HUB_TOKEN, DD_KEY]:
+        assert canary not in json.dumps(value)
+
+
+def test_diagnostic_pagination_is_stable_and_read_only(agent):
+    client, settings, app = agent
+    before = query(settings, "SELECT count(*) FROM dns_checks")[0][0]
+    first = client.get(url("/diagnostics?limit=1"), headers=AUTH).json()
+    assert len(first["observations"]) == 1 and first["next_cursor"]
+    seen = [(first["observations"][0]["kind"], first["observations"][0]["id"])]
+    cursor = first["next_cursor"]
+    while cursor:
+        response = client.get(
+            url("/diagnostics"), headers=AUTH, params={"cursor": cursor, "limit": 1}
+        )
+        assert response.status_code == 200
+        page = response.json()
+        seen.extend((o["kind"], o["id"]) for o in page["observations"])
+        cursor = page["next_cursor"]
+    assert len(set(seen)) == len(seen) == 3
+    assert query(settings, "SELECT count(*) FROM dns_checks")[0][0] == before
+    for suffix in ["?limit=0", "?limit=101", "?cursor=malformed"]:
+        assert client.get(url("/diagnostics" + suffix), headers=AUTH).status_code == 400
+    assert client.get(url("/diagnostics?record=missing"), headers=AUTH).status_code == 404
