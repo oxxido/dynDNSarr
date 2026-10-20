@@ -29,6 +29,7 @@ packages = [
     "dyndnsarr_agent.dns",
     "dyndnsarr_agent.outbox",
     "dyndnsarr_agent.providers",
+    "dyndnsarr_agent.integrations",
 ]
 
 [tool.setuptools.package-data]

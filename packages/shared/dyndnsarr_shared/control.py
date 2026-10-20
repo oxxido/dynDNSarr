@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from dyndnsarr_shared.events import AgentId, EventId, Instant
 
-COMMAND_TYPES = ("check_dns", "sync_ddns")
+COMMAND_TYPES = ("check_dns", "sync_ddns", "wake_device")
 COMMAND_STATUSES = ("received", "running", "succeeded", "failed", "expired")
 FINAL_COMMAND_STATUSES = ("succeeded", "failed", "expired")
 

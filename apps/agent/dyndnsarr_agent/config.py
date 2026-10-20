@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     api_token: SecretStr | None = None
     tls_cert_file: Path | None = None
     tls_key_file: Path | None = None
+    integrations_file: Path | None = None
+    pihole_password: SecretStr | None = None
 
     @model_validator(mode="after")
     def _check_control_api(self) -> "Settings":

@@ -74,6 +74,8 @@ def _apply_ip(conn: sqlite3.Connection, at: datetime, outcome: Consensus) -> Non
     previous_ip = ddns_repo.get_state(conn, "public_ip")
     previous_status = ddns_repo.get_state(conn, "ip_status")
     if outcome.status == "confirmed":
+        if previous_status == "uncertain":
+            ddns_repo.insert_event(conn, "ip_recovered", at, None, {})
         if outcome.ip != previous_ip:
             ddns_repo.insert_event(
                 conn, "ip_changed", at, None, {"previous": previous_ip, "ip": outcome.ip}

@@ -10,6 +10,9 @@ EVENT_TYPES = frozenset(
         "agent_started",
         "ip_changed",
         "ip_uncertain",
+        "ip_recovered",
+        "integration_health",
+        "wake_completed",
         "dns_verified",
         "dns_mismatch",
         "dns_update_succeeded",
@@ -245,4 +248,5 @@ def purge(
     ):
         # Tabla y columna son constantes de este módulo, nunca entrada externa.
         deleted[table] = conn.execute(f"DELETE FROM {table} WHERE {column} < ?", (limit,)).rowcount
+    conn.execute("DELETE FROM wake_attempts WHERE requested_at < ?", (events_limit,))
     return deleted

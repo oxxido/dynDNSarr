@@ -1,0 +1,22 @@
+# Archivo local del Agent, separado de agent.toml. Sin secretos. Reiniciar tras cambiarlo.
+interval_seconds = 60
+
+# Pi-hole v6: usar HTTPS verificado y contraseña de aplicación por entorno.
+# Para HTTP LAN consciente, declarar explícitamente la subred; nunca atraviesa un proxy automático.
+[pihole]
+url = "https://192.168.1.2"
+networks = ["192.168.1.0/24"]
+# ca_file = "/etc/dyndnsarr/pihole-ca.pem"
+
+[[devices]]
+id = "nas"
+name = "NAS"
+mac = "00:11:22:33:44:55"
+ip = "192.168.1.10"
+broadcast = "192.168.1.255"
+port = 9
+probe_port = 443
+manual = false
+automatic = false
+cooldown_seconds = 900
+boot_seconds = 180

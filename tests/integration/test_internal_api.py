@@ -341,7 +341,7 @@ def test_the_same_id_with_another_type_is_409(agent):
 @pytest.mark.parametrize(
     "extra,status,code",
     [
-        ({"type": "wake_device", "resource_id": "nas-1"}, 422, "unsupported_command"),
+        ({"type": "wake_device", "resource_id": "nas-1"}, 422, "device_not_allowed"),
         ({"parameters": {"x": 1}}, 422, "invalid_command"),
         ({"resource_id": "nas-1"}, 422, "invalid_command"),
     ],
