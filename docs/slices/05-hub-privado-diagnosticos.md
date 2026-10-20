@@ -1,9 +1,9 @@
 # Slice 5 — Hub privado y diagnósticos
 
-- **Estado:** en implementación
+- **Estado:** en revisión
 - **Fase (arquitectura):** 4 ([architecture.md](../architecture.md) §5, §6, §8, §9, §11, §12 Fase 4 y §13 casos 9, 11–13)
 - **Rama:** `slice/05-hub-privado-diagnosticos`
-- **PR:** — (implementación local; pendiente de abrir PR tras validación)
+- **PR:** [#7](https://github.com/oxxido/dynDNSarr/pull/7)
 
 ## Objetivo
 
@@ -177,4 +177,6 @@ Decisiones implementadas: [ADR-0009](../decisions/0009-administracion-web.md) (i
 - Chrome instalado, automatizado con Playwright de QA (solo venv local, sin dependencia nueva de runtime/CI): 20 capturas de las cinco vistas en escritorio/móvil y claro/oscuro, más login; sin desbordamiento horizontal. Navegación contra las apps mediante transporte ASGI interceptado, sin desactivar TLS. Login/logout, campos iniciales de verificación, filas dinámicas y tema Sistema con cambios de preferencia/persistencia comprobados. El e2e separado cubre el proxy HTTPS real con verificación de certificados.
 - Hallazgos corregidos durante QA: Chrome envía `Origin: null` en formularios con política no-referrer (privado cambiado a same-origin manteniendo CSRF y rechazo de null); colisión de `c.update` con el método del diccionario en Jinja2 (acceso por clave para precargar los campos de verificación). Añadidas regresiones automatizadas.
 - Argon2id medido localmente: hash 85,4 ms / verificación 71,2 ms (64 MiB, t=3, p=4; no extrapolar al servidor de despliegue).
-- Suite completa local: **836 passed**, sin skips, en 269,81 s (Python 3.12); los últimos ajustes de cabeceras/errores y precarga del formulario están además cubiertos por las 38 pruebas dirigidas posteriores. Una advertencia de deprecación preexistente de Starlette/TestClient, sin fallos. Pendiente: CI del PR. La comprobación manual §9.5 en la instalación del usuario y cualquier mutación contra DonDominio real siguen a cargo del usuario; no se ejecutaron aquí. La imagen Docker se verifica en CI, sin modificar el servidor Docker local.
+- Suite completa local: **836 passed**, sin skips, en 269,81 s (Python 3.12); los últimos ajustes de cabeceras/errores y precarga del formulario están además cubiertos por las 38 pruebas dirigidas posteriores. Una advertencia de deprecación preexistente de Starlette/TestClient, sin fallos. Resultados de CI (Python 3.11/3.12 e imagen Docker) en [los checks del PR #7](https://github.com/oxxido/dynDNSarr/pull/7/checks). La comprobación manual §9.5 en la instalación del usuario y cualquier mutación contra DonDominio real siguen a cargo del usuario; no se ejecutaron aquí. La imagen Docker se verifica en CI, sin modificar el servidor Docker local.
+
+- Entrega: rama subida a `origin/slice/05-hub-privado-diagnosticos`, PR [#7](https://github.com/oxxido/dynDNSarr/pull/7) abierto contra `main`, sin merge. Verificación documental: 73 enlaces locales existentes y diff sin errores. La revisión de CI y del PR se consulta en sus checks; la prueba manual de la instalación sigue pendiente según §9.5.
