@@ -257,6 +257,6 @@ async def get_diagnostics(request: Request):
     if name is not None and name not in names:
         return _error(404, "request_error", "not_found", "Registro desconocido")
     try:
-        return diagnostics(request.app.state.db, name, int(limit_text), cursor)
+        return diagnostics(request.app.state.db, name, int(limit_text), cursor, record_names=names)
     except ValueError:
         return _error(400, "request_error", "invalid_cursor", "Cursor no válido")

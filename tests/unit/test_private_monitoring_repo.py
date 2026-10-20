@@ -139,3 +139,28 @@ def test_repeated_snapshot_and_gap_do_not_recreate_healthy_time(tmp_path):
     private_repo.purge(db, NOW + timedelta(days=31))
     assert private_repo.samples(db, "home", "", NOW) == []
     db.close()
+
+
+def test_reused_agent_observation_ids_are_distinct_by_timestamp(tmp_path):
+    from dyndnsarr_shared.control import DiagnosticPage
+
+    db = connect(tmp_path / "hub.db")
+    migrate(db, MIGRATIONS)
+    agents_repo.create_agent(db, "home", hash_token("test"), NOW)
+    for at in ["2026-10-19T12:00:00Z", "2026-10-20T12:00:00Z"]:
+        page = DiagnosticPage(
+            observations=[
+                dict(
+                    id=1,
+                    kind="dns",
+                    observed_at=at,
+                    record_name="home.example.com",
+                    source="1.1.1.1",
+                    ips=["83.45.12.134"],
+                )
+            ]
+        )
+        private_repo.save_snapshot(db, "home", "diagnostics", page, None, NOW)
+        private_repo.save_snapshot(db, "home", "diagnostics", page, None, NOW)
+    assert db.execute("SELECT count(*) FROM private_observations").fetchone()[0] == 2
+    db.close()

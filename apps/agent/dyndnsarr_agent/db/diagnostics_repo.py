@@ -6,7 +6,7 @@ import json
 from dyndnsarr_shared.control import DiagnosticObservation, DiagnosticPage, RecordDiagnostic
 
 
-def diagnostics(conn, record_name=None, limit=100, cursor=None):
+def diagnostics(conn, record_name=None, limit=100, cursor=None, record_names=None):
     before = None
     if cursor:
         try:
@@ -66,6 +66,8 @@ def diagnostics(conn, record_name=None, limit=100, cursor=None):
     states = conn.execute("SELECT record_name, accepted_at FROM record_state" + where, params)
     records = []
     for name, accepted in states:
+        if record_names is not None and name not in record_names:
+            continue
         verified = conn.execute(
             "SELECT max(occurred_at) FROM events WHERE type = 'dns_verified' AND record_name = ?",
             (name,),

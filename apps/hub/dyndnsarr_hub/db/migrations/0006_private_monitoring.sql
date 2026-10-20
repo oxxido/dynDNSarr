@@ -39,6 +39,6 @@ CREATE TABLE private_observations (
     observed_at TEXT NOT NULL,
     record_name TEXT,
     detail TEXT NOT NULL,
-    PRIMARY KEY(agent_id, kind, observation_id)
+    PRIMARY KEY(agent_id, kind, observation_id, observed_at)
 );
 CREATE INDEX private_observations_at ON private_observations(observed_at);

@@ -46,3 +46,17 @@ def test_no_data_null_and_confirmed_recovery():
         24,
     )
     assert result["incidents"][0]["recovered"] is True
+
+
+@pytest.mark.parametrize("hours", [24, 168, 720])
+def test_windows_keep_unknown_duration_and_clip_future_observations(hours):
+    result = metrics(
+        [
+            (NOW - timedelta(minutes=5), "healthy", 300),
+            (NOW + timedelta(seconds=1), "critical", 300),
+        ],
+        NOW,
+        hours,
+    )
+    assert result["seconds"]["healthy"] == 300
+    assert result["seconds"]["unknown"] == hours * 3600 - 300
