@@ -116,3 +116,74 @@ def test_service_client_cli_persists_hash_lists_and_revokes(tmp_path, monkeypatc
     assert cli.run(["client-revoke", "reader"]) == 0
     assert services_repo.authenticate(conn, token) is None
     conn.close()
+
+
+def test_authorized_mcp_dns_command_reaches_real_tls_agent(tmp_path, tls_agent):
+    import uuid
+
+    from dyndnsarr_hub.db import agents_repo, private_repo
+    from dyndnsarr_shared.control import AgentStatus
+
+    hub = TlsHub(tmp_path, services_enabled=True, agent_ca_file=tls_agent.ca_file)
+    key = str(uuid.uuid4())
+    try:
+        with httpx.Client(verify=build_ssl_context(tls_agent.ca_file), trust_env=False) as http:
+            status = http.get(
+                tls_agent.url + "/internal/v1/status",
+                headers={"Authorization": "Bearer " + tls_agent.token},
+            )
+            assert status.status_code == 200
+        conn = connect(hub.db_path)
+        agents_repo.set_api_url(conn, hub.agent_id, tls_agent.url)
+        agents_repo.set_api_token(conn, hub.agent_id, tls_agent.token)
+        private_repo.save_snapshot(
+            conn, hub.agent_id, "status", AgentStatus.model_validate(status.json()), None, utc_now()
+        )
+        token = services_repo.add_client(
+            conn,
+            "operator",
+            Grants(actions=["check_dns"], agents=[hub.agent_id], domains=["home.example.com"]),
+            utc_now(),
+        )
+        conn.close()
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "dyndnsarr_hub.mcp_server"],
+            cwd=str(tmp_path),
+            env={
+                "DYNDNSARR_HUB_MCP_HUB_URL": hub.url,
+                "DYNDNSARR_HUB_MCP_TOKEN": token,
+                "DYNDNSARR_HUB_MCP_CA_FILE": str(hub.ca_file),
+            },
+        )
+
+        async def scenario():
+            async with stdio_client(params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    arguments = dict(
+                        agent_id=hub.agent_id, domain="home.example.com", operation_id=key
+                    )
+                    result = await session.call_tool("check_dns", arguments)
+                    assert not result.isError, result
+                    assert json.loads(result.content[0].text)["result"]["command_id"] == key
+                    repeated = await session.call_tool("check_dns", arguments)
+                    assert not repeated.isError
+                    async with httpx.AsyncClient(
+                        verify=build_ssl_context(tls_agent.ca_file), trust_env=False
+                    ) as http:
+                        response = await http.get(
+                            tls_agent.url + "/internal/v1/commands/" + key,
+                            headers={"Authorization": "Bearer " + tls_agent.token},
+                        )
+                        assert response.json()["status"] == "succeeded"
+                        assert list(response.json()["result"]["records"]) == ["home.example.com"]
+
+        asyncio.run(scenario())
+        conn = connect(hub.db_path)
+        assert conn.execute(
+            "SELECT count(*) FROM commands WHERE command_id=?", (key,)
+        ).fetchone() == (1,)
+        conn.close()
+    finally:
+        hub.close()
