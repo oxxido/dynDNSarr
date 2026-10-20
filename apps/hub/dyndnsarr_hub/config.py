@@ -10,6 +10,14 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="DYNDNSARR_HUB_")
 
+    services_enabled: bool = False
+    gateway_file: Path | None = None
+    gateway_ca_file: Path | None = None
+    gateway_token: SecretStr | None = None
+    mcp_hub_url: str = "https://localhost"
+    mcp_token: SecretStr | None = None
+    mcp_ca_file: Path | None = None
+
     host: str = "127.0.0.1"
     port: int = Field(8000, ge=1, le=65535)
     data_dir: Path = Path("/data")
@@ -37,7 +45,7 @@ class Settings(BaseSettings):
     homarr_origin: str | None = None
     application_url: str | None = None
 
-    @field_validator("alerts_file", mode="before")
+    @field_validator("alerts_file", "gateway_file", "gateway_ca_file", "mcp_ca_file", mode="before")
     @classmethod
     def optional_alert_file(cls, value):
         return None if value == "" else value

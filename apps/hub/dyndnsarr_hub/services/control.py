@@ -1,7 +1,7 @@
 """Orquestación de control compartida por consola y administración web."""
 
 from dyndnsarr_hub.clock import utc_now
-from dyndnsarr_hub.db import control_repo
+from dyndnsarr_hub.db import control_repo, services_repo
 from dyndnsarr_shared.control import ConfigPut
 from dyndnsarr_shared.db import transaction
 
@@ -16,6 +16,7 @@ def record_command_reply(conn, command_id, agent_id, reply, *, submission=True):
             control_repo.update_command_from_agent(
                 conn, command_id, agent_id, "failed", {"code": reply.api_error}
             )
+        services_repo.record_command_result(conn, command_id, utc_now())
 
 
 async def send_config(conn, client, desired):
