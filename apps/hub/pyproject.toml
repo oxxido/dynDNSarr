@@ -10,6 +10,7 @@ dependencies = [
     "pydantic-settings>=2.3,<3",
     "httpx>=0.27,<1",
     "jinja2>=3.1,<4",
+    "argon2-cffi>=23.1,<26",
 ]
 
 [project.scripts]
@@ -30,7 +31,7 @@ packages = [
 ]
 
 [tool.setuptools.package-data]
-"dyndnsarr_hub" = ["templates/public/*.j2", "static/assets/*.png"]
+"dyndnsarr_hub" = ["templates/public/*.j2", "templates/admin/*.j2", "static/assets/*.png"]
 "dyndnsarr_hub.db" = ["migrations/*.sql"]
 
 [tool.setuptools.dynamic]
