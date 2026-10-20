@@ -22,8 +22,24 @@ html[data-theme="dark"]{--bg:#071425;--bg-top:#071a2f;--fg:#e8f3ff;--muted:#96af
 .sr-only{position:absolute;clip:rect(0,0,0,0)}.legend .l-ok{background:#30d990}.legend .l-warn{background:#ffbc42}.legend .l-bad{background:#fa5475}.legend .l-unknown{background:#859bb4}.hist-note{color:var(--muted);font-weight:400;font-size:13px}
 .big-mascot.mascot-unknown{filter:grayscale(.95) opacity(.65)}.tick.warn{background:linear-gradient(160deg,#ffbc42,#f59e0b)}.tick.muted{background:linear-gradient(160deg,#9db0c6,#859bb4)}.mini-badge.warn{background:color-mix(in srgb,var(--amber) 16%,var(--panel));color:#a96b00}.mini-badge.muted{background:color-mix(in srgb,var(--muted) 14%,var(--panel));color:var(--muted)}.record.empty{color:var(--muted)}.mini-badge{white-space:nowrap}.history .section-head{flex-wrap:wrap}.legend{flex-wrap:wrap}
 .state-orange .dot{background:var(--amber);box-shadow:0 0 12px rgba(255,173,44,.45)}.state-red .dot{background:var(--red);box-shadow:0 0 12px rgba(246,62,104,.45)}.state-unknown .dot{background:var(--muted);box-shadow:none}
+.mascot-wrap{position:relative;display:block}.hero-center .mascot-wrap{width:min(100%,392px)}.mini .mascot-wrap{width:min(100%,164px)}.mascot-wrap{isolation:isolate}.mascot-body{position:relative;display:block;animation:bob 5.5s ease-in-out infinite}.mascot-body>img{display:block}
+.face{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}.face .sclera{fill:#fff;stroke:rgba(8,40,60,.2);stroke-width:5}.face .pupil circle{fill:#0b1f2c}.face .pupil .glint{fill:#fff}.face .pupil{transform:translate(calc(var(--x,0)*1px),calc(var(--y,0)*1px));transition:transform .12s ease-out}
+.face .eye{transform-box:fill-box;transform-origin:center;animation:blink 6s infinite}.face .mouth-g{transform-box:fill-box;transform-origin:center;animation:breathe 4.5s ease-in-out infinite}.face .mouth{fill:none;stroke:#0b1f2c;stroke-width:15;stroke-linecap:round;stroke-linejoin:round}
+.mini.orange .face .eye{animation-delay:-2.3s}.mini.red .face .eye{animation-delay:-4.1s}
+@keyframes blink{0%,92%,100%{transform:scaleY(1)}95%{transform:scaleY(.08)}}@keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
+@media(prefers-reduced-motion:reduce){.face .eye,.face .mouth-g,.mascot-body,.mascot-wrap::before{animation:none}.bubbles{display:none}.face .pupil{transition:none}}
+.mascot-wrap::before{content:"";position:absolute;z-index:-1;left:10%;right:10%;bottom:-1%;height:9%;border-radius:50%;background:radial-gradient(ellipse at center,rgba(8,30,60,.34),transparent 70%);filter:blur(3px);animation:shadow 5.5s ease-in-out infinite}
+.mini.orange .mascot-body,.mini.orange .mascot-wrap::before{animation-delay:-1.8s}.mini.red .mascot-body,.mini.red .mascot-wrap::before{animation-delay:-3.6s}
+.bubbles{position:absolute;inset:0;z-index:-1;overflow:hidden;pointer-events:none}.bubbles i{position:absolute;bottom:-30px;border-radius:50%;border:1.5px solid rgba(35,165,230,.6);background:radial-gradient(circle at 32% 30%,rgba(255,255,255,.95) 0 14%,rgba(110,205,245,.35) 45%,rgba(30,160,225,.16));box-shadow:inset 0 0 4px rgba(255,255,255,.7);opacity:0;animation:rise linear infinite}
+.bubbles i:nth-child(1){left:5%;width:12px;height:12px;animation-duration:13s;animation-delay:-1s;--sway:18px}.bubbles i:nth-child(2){left:11%;width:7px;height:7px;animation-duration:9s;animation-delay:-6s;--sway:-14px}.bubbles i:nth-child(3){left:17%;width:16px;height:16px;animation-duration:15s;animation-delay:-3s;--sway:22px}.bubbles i:nth-child(4){left:24%;width:9px;height:9px;animation-duration:11s;animation-delay:-8s;--sway:-10px}.bubbles i:nth-child(5){left:31%;width:6px;height:6px;animation-duration:8s;animation-delay:-4s;--sway:12px}.bubbles i:nth-child(6){left:38%;width:13px;height:13px;animation-duration:14s;animation-delay:-10s;--sway:-20px}.bubbles i:nth-child(7){left:46%;width:8px;height:8px;animation-duration:10s;animation-delay:-2s;--sway:14px}.bubbles i:nth-child(8){left:53%;width:11px;height:11px;animation-duration:12s;animation-delay:-7s;--sway:-16px}.bubbles i:nth-child(9){left:61%;width:7px;height:7px;animation-duration:9s;animation-delay:-5s;--sway:18px}.bubbles i:nth-child(10){left:68%;width:15px;height:15px;animation-duration:16s;animation-delay:-9s;--sway:-12px}.bubbles i:nth-child(11){left:75%;width:9px;height:9px;animation-duration:11s;animation-delay:-1s;--sway:20px}.bubbles i:nth-child(12){left:82%;width:12px;height:12px;animation-duration:13s;animation-delay:-6s;--sway:-18px}.bubbles i:nth-child(13){left:89%;width:7px;height:7px;animation-duration:10s;animation-delay:-3s;--sway:10px}.bubbles i:nth-child(14){left:95%;width:10px;height:10px;animation-duration:12s;animation-delay:-8s;--sway:-14px}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3.5%)}}@keyframes shadow{0%,100%{transform:scaleX(1);opacity:.95}50%{transform:scaleX(.88);opacity:.6}}
+@keyframes rise{0%{transform:translate(0,0) scale(.7);opacity:0}12%{opacity:.95}50%{transform:translate(var(--sway),-230px) scale(.9)}88%{opacity:.7}100%{transform:translate(0,-460px) scale(1);opacity:0}}
 </style></head>
 <body>
+{%- macro face(mood) -%}
+{%- set mouths = {'green': 'M535 685 Q620 765 705 685', 'orange': 'M545 715 Q583 690 620 715 T695 715', 'red': 'M545 745 Q620 670 695 745', 'unknown': 'M565 715 L675 715'} -%}
+<svg class="face face-{{ mood }}" viewBox="0 0 1254 1254" aria-hidden="true" focusable="false"><g class="eye"><ellipse class="sclera" cx="470" cy="530" rx="78" ry="92"/><g class="pupil" data-cx="470" data-cy="530"><circle cx="470" cy="530" r="44"/><circle class="glint" cx="486" cy="510" r="13"/></g></g><g class="eye"><ellipse class="sclera" cx="770" cy="530" rx="78" ry="92"/><g class="pupil" data-cx="770" data-cy="530"><circle cx="770" cy="530" r="44"/><circle class="glint" cx="786" cy="510" r="13"/></g></g><g class="mouth-g"><path class="mouth" d="{{ mouths[mood] }}"/></g></svg>
+{%- endmacro -%}
 <div class="shell state-{{ v.state_class }}" id="app">
 <header class="header">
   <div aria-label="DynDNSarr"><div class="brand">DynDNS<b>arr</b></div><div class="brand-waves"></div></div>
@@ -31,9 +47,10 @@ html[data-theme="dark"]{--bg:#071425;--bg-top:#071a2f;--fg:#e8f3ff;--muted:#96af
 </header>
 <main>
   <section class="hero" aria-label="Estado del servicio">
+    <div class="bubbles" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
     <div class="hero-copy"><div class="overline">Estado del servicio</div><h1 id="heroTitle">{{ v.title }}</h1><p id="heroDescription">{{ v.description }}</p></div>
-    <div class="hero-center"><img class="big-mascot hero-main-img{% if v.state_class == 'unknown' %} mascot-unknown{% endif %}" id="heroMascot" src="/static/assets/{{ v.mascot }}" alt="Dyno, el pulpito guardián, en estado {{ v.title|lower }}"></div>
-    <div class="hero-side"><div class="handwriting">Siempre<br>conectado ♡</div><div class="side-mascots"><div class="mini orange"><img src="/static/assets/dyno-orange.png" alt="Dyno con luz naranja"><span>DEGRADADO</span></div><div class="mini red"><img src="/static/assets/dyno-red.png" alt="Dyno con luz roja"><span>SIN CONEXIÓN</span></div></div></div>
+    <div class="hero-center"><span class="mascot-wrap"><span class="mascot-body"><img class="big-mascot hero-main-img{% if v.state_class == 'unknown' %} mascot-unknown{% endif %}" id="heroMascot" src="/static/assets/{{ v.mascot }}" alt="Dyno, el pulpito guardián, en estado {{ v.title|lower }}">{{ face(v.state_class) }}</span></span></div>
+    <div class="hero-side"><div class="handwriting">Siempre<br>conectado ♡</div><div class="side-mascots"><div class="mini orange"><span class="mascot-wrap"><span class="mascot-body"><img src="/static/assets/dyno-orange.png" alt="Dyno con luz naranja">{{ face('orange') }}</span></span><span>DEGRADADO</span></div><div class="mini red"><span class="mascot-wrap"><span class="mascot-body"><img src="/static/assets/dyno-red.png" alt="Dyno con luz roja">{{ face('red') }}</span></span><span>SIN CONEXIÓN</span></div></div></div>
   </section>
   <section class="cards" aria-label="Resumen de conectividad">
     <article class="panel metric"><span class="ring green" id="statusIcon" aria-hidden="true">{{ v.icon }}</span><div><h2>Estado del servicio</h2><strong class="green" id="statusMetric">{{ v.title }}</strong><p id="statusDesc">{{ v.card_description }}</p></div></article>
@@ -68,5 +85,13 @@ let preference='system';try{preference=localStorage.getItem('dyndnsarr-theme')||
 if(!['system','light','dark'].includes(preference))preference='system';themeSelect.value=preference;
 function applyTheme(){document.documentElement.dataset.theme=preference==='system'?(media.matches?'dark':'light'):preference}
 themeSelect.addEventListener('change',()=>{preference=themeSelect.value;try{localStorage.setItem('dyndnsarr-theme',preference)}catch(e){}applyTheme()});media.addEventListener('change',applyTheme);applyTheme();
+(function(){
+const faces=[...document.querySelectorAll('.face')];if(!faces.length||matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+let px=0,py=0,frame=0;
+function look(){frame=0;for(const f of faces){const r=f.getBoundingClientRect(),k=r.width/1254;for(const p of f.querySelectorAll('.pupil')){const dx=px-(r.left+p.dataset.cx*k),dy=py-(r.top+p.dataset.cy*k),d=Math.hypot(dx,dy)||1,m=30*Math.min(1,d/(160*k+1));p.style.setProperty('--x',dx/d*m);p.style.setProperty('--y',dy/d*m)}}}
+function aim(e){px=e.clientX;py=e.clientY;if(!frame)frame=requestAnimationFrame(look)}
+function rest(){for(const p of document.querySelectorAll('.face .pupil')){p.style.setProperty('--x',0);p.style.setProperty('--y',0)}}
+document.addEventListener('pointermove',aim);document.addEventListener('pointerdown',aim);document.documentElement.addEventListener('pointerleave',rest);
+})();
 </script>
 </body></html>

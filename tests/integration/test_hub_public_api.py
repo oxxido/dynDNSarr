@@ -456,6 +456,20 @@ def test_theme_selector_persists_before_first_paint(tmp_path):
     assert "color-scheme" in response.text and page.find("meta", name="viewport")
 
 
+@pytest.mark.parametrize(
+    ("state", "mood"),
+    [("healthy", "green"), ("degraded", "orange"), ("critical", "red"), ("unknown", "unknown")],
+)
+def test_mascots_have_a_decorative_face_and_bubbles_float_behind(tmp_path, state, mood):
+    with hub(tmp_path, seed_state(state)) as client:
+        response, page = landing(client)
+    faces = [a for t, a in page.tags if t == "svg" and "face" in a["class"].split()]
+    assert [f["class"] for f in faces] == [f"face face-{mood}", "face face-orange", "face face-red"]
+    assert all(f["aria-hidden"] == "true" for f in faces)
+    assert page.find("div", **{"class": "bubbles", "aria-hidden": "true"})
+    assert "pointermove" in response.text
+
+
 # --- estáticos y aislamiento del Agent ---
 
 ASSETS = Path(__file__).parents[2] / "apps/hub/dyndnsarr_hub/static/assets"
