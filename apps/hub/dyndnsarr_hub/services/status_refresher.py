@@ -16,7 +16,7 @@ from pathlib import Path
 import httpx
 
 from dyndnsarr_hub.clock import parse_instant, utc_now
-from dyndnsarr_hub.db import agents_repo, public_repo
+from dyndnsarr_hub.db import agents_repo, private_repo, public_repo
 from dyndnsarr_hub.public.state import AgentProjection, RecordProjection, derive_state
 from dyndnsarr_hub.services.agent_client import AgentClient, build_http_client
 from dyndnsarr_shared.control import AgentStatus
@@ -56,12 +56,16 @@ async def refresh_once(
     http: httpx.AsyncClient | None,
     refresh_seconds: int,
     clock: Callable[[], datetime] = utc_now,
+    agent_ids: set[str] | None = None,
 ) -> dict[str, str | None]:
     """Una pasada por los agentes con API configurada. Devuelve `{agent_id: código de fallo}`
     (`None` si respondió). Un fallo no avanza `refreshed_at` y deja una muestra `unknown`.
     Sin `http` (no se pudo construir el cliente TLS) todos fallan con `tls_config`."""
     results: list[tuple[str, AgentStatus | None, str | None]] = []
+    details, received = {}, {}
     for agent_id, url, token in agents_repo.api_targets(conn):
+        if agent_ids is not None and agent_id not in agent_ids:
+            continue
         if http is None:
             results.append((agent_id, None, "tls_config"))
             continue
@@ -75,18 +79,44 @@ async def refresh_once(
             results.append((agent_id, None, reply.error_code or reply.api_error or "no_status"))
         else:
             results.append((agent_id, reply.value, None))
+            received[agent_id] = clock()
+            cursor = private_repo.snapshot(conn, agent_id).get("diagnostics_cursor")
+            try:
+                details[agent_id] = (await client.config(), await client.diagnostics(cursor))
+            except Exception as exc:
+                logger.warning("private_refresh_error", extra={"error_type": type(exc).__name__})
     now = clock()
     with transaction(conn):
         for agent_id, status, _code in results:
             if status is None:
                 public_repo.add_sample(conn, agent_id, now, "unknown")
+                private_repo.save_snapshot(conn, agent_id, "status", None, _code, now)
+                private_repo.mark_gap(conn, agent_id, now)
                 continue
-            projection = project(agent_id, status, now)
+            projection = project(agent_id, status, received[agent_id])
             public_repo.save_agent_status(conn, projection)
             public_repo.add_sample(
-                conn, agent_id, now, derive_state(projection, now, refresh_seconds)
+                conn,
+                agent_id,
+                now,
+                derive_state(projection, now, refresh_seconds, public_repo.monitoring_policy(conn)),
             )
         public_repo.purge_samples(conn, now)
+    # Una proyección privada inválida no revierte la actualización pública.
+    with transaction(conn):
+        for agent_id, status, _code in results:
+            if status is None:
+                continue
+            private_repo.save_snapshot(conn, agent_id, "status", status, None, received[agent_id])
+            if agent_id in details:
+                for kind, reply in zip(("config", "diagnostics"), details[agent_id], strict=True):
+                    private_repo.save_snapshot(
+                        conn, agent_id, kind, reply.value, reply.error_code or reply.api_error, now
+                    )
+            private_repo.add_state_samples(
+                conn, project(agent_id, status, received[agent_id]), now, refresh_seconds
+            )
+        private_repo.purge(conn, now)
     return {agent_id: code for agent_id, _, code in results}
 
 

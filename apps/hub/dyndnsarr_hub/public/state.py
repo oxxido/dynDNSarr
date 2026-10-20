@@ -1,7 +1,6 @@
 """Reglas de estado de la vista pública y agregación del historial (ADR-0007, D3 y D5).
 
-Funciones puras, sin HTTP ni SQL. Las constantes son provisionales (el slice 5 las hará
-configurables, A4): no están verificadas con datos reales.
+Funciones puras, sin HTTP ni SQL. La política parametrizable conserva los defaults de slice4 (A4).
 """
 
 import ipaddress
@@ -11,9 +10,14 @@ from datetime import datetime, timedelta
 
 from dyndnsarr_hub.public.dto import BUCKET_SECONDS, HISTORY_BUCKETS, State
 
-FRESH_OBSERVATION = timedelta(minutes=15)
-CRITICAL_MISMATCH = timedelta(hours=1)
-STALE_REFRESH_FACTOR = 3
+
+@dataclass(frozen=True)
+class MonitoringPolicy:
+    observation_max_seconds: int = 900
+    critical_mismatch_seconds: int = 3600
+    stale_refresh_factor: int = 3
+    version: int = 1
+
 
 # De peor a mejor: un agente sin datos impide afirmar «operativo» (D3).
 _SEVERITY: tuple[State, ...] = ("critical", "degraded", "unknown", "healthy")
@@ -62,22 +66,32 @@ def _stale(moment: datetime | None, now: datetime, limit: timedelta) -> bool:
     return moment is None or now - moment > limit
 
 
-def derive_state(projection: AgentProjection | None, now: datetime, refresh_seconds: int) -> State:
+def derive_state(
+    projection: AgentProjection | None,
+    now: datetime,
+    refresh_seconds: int,
+    policy: MonitoringPolicy | None = None,
+) -> State:
     """Estado de un agente. Se deriva al leer: si el refresco deja de correr, la proyección
     envejece y pasa a `unknown` sin que nadie la toque."""
+    policy = policy or MonitoringPolicy()
     if projection is None or not projection.records:
         return "unknown"
-    if now - projection.refreshed_at > timedelta(seconds=STALE_REFRESH_FACTOR * refresh_seconds):
+    if now - projection.refreshed_at > timedelta(
+        seconds=policy.stale_refresh_factor * refresh_seconds
+    ):
         return "unknown"
-    if _stale(projection.last_check_at, now, FRESH_OBSERVATION) or _stale(
-        projection.public_ip_confirmed_at, now, FRESH_OBSERVATION
+    if _stale(
+        projection.last_check_at, now, timedelta(seconds=policy.observation_max_seconds)
+    ) or _stale(
+        projection.public_ip_confirmed_at, now, timedelta(seconds=policy.observation_max_seconds)
     ):
         return "unknown"
     for record in projection.records:
         persistent_mismatch = (
             record.verification == "mismatch"
             and record.since is not None
-            and now - record.since > CRITICAL_MISMATCH
+            and now - record.since > timedelta(seconds=policy.critical_mismatch_seconds)
         )
         definitive_error = record.failures > 0 and record.next_attempt_at is None
         if persistent_mismatch or definitive_error:

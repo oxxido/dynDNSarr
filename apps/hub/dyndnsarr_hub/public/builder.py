@@ -52,7 +52,7 @@ def _ipv4(projection: AgentProjection, known: bool) -> Level:
 def build_dto(conn: sqlite3.Connection, now: datetime, settings: Settings) -> PublicStatusDTO:
     refresh = settings.status_refresh_seconds
     statuses = public_repo.enabled_agent_statuses(conn)
-    states = [derive_state(p, now, refresh) for p in statuses]
+    states = [derive_state(p, now, refresh, public_repo.monitoring_policy(conn)) for p in statuses]
     dns: list[Level] = []
     ipv4: list[Level] = []
     service: list[Level] = []
