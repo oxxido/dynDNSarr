@@ -6,6 +6,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+export DYNDNSARR_HUB_ADMIN_ORIGIN="https://hub.test"
 export DYNDNSARR_HUB_PORT="${DYNDNSARR_HUB_PORT:-18000}"
 compose=(docker compose -p dyndnsarr-verify -f "$root/apps/hub/compose.yaml")
 trap '"${compose[@]}" down -v --remove-orphans' EXIT
@@ -40,3 +41,21 @@ if [ "$second" -ne $((first + 1)) ]; then
     exit 1
 fi
 echo "OK: healthcheck correcto y datos conservados tras restart (boot_count $first -> $second)"
+
+# Slice5: dependencia Argon2id y plantilla privada presentes; sin alta web ni OpenAPI público.
+"${compose[@]}" exec -T hub python - <<'PY'
+import urllib.error
+import urllib.request
+from argon2 import PasswordHasher
+encoded = PasswordHasher().hash("synthetic compose password")
+assert encoded.startswith("$argon2id$")
+response = urllib.request.urlopen("http://127.0.0.1:8000/admin/login")
+assert response.status == 200 and b"aprovisionamiento" in response.read()
+try:
+    urllib.request.urlopen("http://127.0.0.1:8000/openapi.json")
+except urllib.error.HTTPError as exc:
+    assert exc.code == 404
+else:
+    raise AssertionError("OpenAPI expuesto")
+print("OK: imagen con Argon2id y login privado")
+PY
