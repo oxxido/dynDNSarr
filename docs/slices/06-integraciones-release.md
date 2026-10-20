@@ -1,0 +1,94 @@
+# Slice 6 — Integraciones y release v1.0
+
+- **Estado:** planificado
+- **Fase (arquitectura):** 5 (§10, §11, §12 y §13 casos 8, 10–12, 14)
+- **Rama:** `slice/06-integraciones-release`
+- **PR:** —
+
+## Objetivo
+
+Completar v1.0 con integraciones opcionales que no condicionen el DDNS: inventario Pi-hole,
+WoL por política local, alertas persistentes SMTP/webhook, resumen Homarr, retención y exportación.
+
+## Alcance
+
+- Incluye Pi-hole v6 de solo lectura en el Agent, dispositivos y concesiones con evidencia temporal;
+  WoL manual/automático tras reinicio del Agent; vistas privadas, comandos idempotentes y auditoría.
+- Alertas en el Hub por eventos, severidad, espera mínima, supresión, recuperación y reintentos;
+  SMTP TLS y webhooks compatibles con Slack. Botón de prueba. Configuración local TOML sin secretos.
+- Homarr mediante widget iframe público limitado a su origen configurado y JSON sin datos privados;
+  retención configurable del Hub, exportación privada por lista blanca, wheels y receta de release.
+- No incluye Pi-hole v5, administración de Pi-hole, apagado/reinicio de equipos, ICMP privilegiado,
+  MCP, administración Caddy ni cambios en el servidor, `.env` real o servicios reales.
+
+## Decisiones previas
+
+- Base: `main` actualizado, árbol limpio, PR #7 y #8 fusionados. Interpretación de «slide 6»: slice6.
+- Pi-hole v6 como versión inicial, consultada al usuario; sin respuesta se mantiene este supuesto.
+  Contrato oficial: [API](https://docs.pi-hole.net/api/) y especificaciones FTL
+  [auth](https://github.com/pi-hole/FTL/blob/master/src/api/docs/content/specs/auth.yaml),
+  [network](https://github.com/pi-hole/FTL/blob/master/src/api/docs/content/specs/network.yaml),
+  [DHCP](https://github.com/pi-hole/FTL/blob/master/src/api/docs/content/specs/dhcp.yaml).
+- Agent: archivo local de integraciones separado de la configuración DDNS remota, secretos por entorno,
+  tarea/cliente/conexión SQLite propios. Los GET privados solo leen snapshots; timeout/backoff por integración.
+- DHCP solo acredita un dispositivo conocido. Consulta DNS reciente → `likely_active`, TCP a un puerto
+  expresamente configurado → `active`; evidencia vencida → `stale`, fallo de integración → `unknown`.
+- WoL: destinos MAC/IP/broadcast/puerto fijados en política local; sin destinos del navegador. Reservar
+  intento antes de UDP, cooldown persistido y comprobación TCP previa; auto solo después de un arranque
+  posterior al primero, explícito por dispositivo. No repetir al reiniciar durante cooldown ni ante resultado incierto.
+- Alertas: entrega at-least-once, IDs estables (el receptor puede deduplicar), cola y backoff persistidos.
+  Payloads sin IP/MAC/token/cuerpo original. HTTPS/SMTP TLS verificados; redirects deshabilitados,
+  DNS resuelto y fijado por petición, redes locales solo con allowlist explícita, metadatos prohibidos.
+- Homarr no requiere credenciales porque solo lee proyección pública; con publicación apagada también
+  queda apagado. No abrir iframe del admin. [Widget oficial](https://homarr.dev/docs/widgets/iframe/).
+- Release: versionado 1.0.0 y workflow para tags semánticos, sin crear tag/release antes del merge.
+
+## Plan de implementación
+
+1. Contratos/config estrictos y migraciones aditivas; pruebas de validación, destinos y upgrade.
+2. Adaptador Pi-hole probado con respuestas oficiales y transporte falso; snapshots privados acotados.
+3. WoL manual/auto con política, persistencia, cooldown y recuperación; pruebas UDP/TCP falsas.
+4. Cola de alertas, reglas y canales con timeouts, reintentos, supresión y recuperación; pruebas de reinicio y SSRF.
+5. Vistas privadas y acciones con sesión/CSRF/idempotencia existentes; Homarr público y exportación segura.
+6. Retención, ejemplos, operaciones, versiones y CI/release; ejecutar suite, wheels y revisar diff.
+7. Commits, push, PR contra main y revisión de CI. Sin merge ni instalación real durante este encargo.
+
+## Criterios de aceptación
+
+1. Pi-hole caído, auth inválida o respuesta malformada no detienen DDNS ni pierden último snapshot válido;
+   lectura nunca modifica Pi-hole. Concesión DHCP por sí sola no muestra conexión confirmada.
+2. Sin sesión o CSRF no se consultan dispositivos ni envían paquetes/alertas. Manipular destino o
+   recurso falla; mismo command_id no envía dos paquetes, incluso tras reinicio. Cooldown limita IDs nuevos.
+3. Auto-WoL solo para dispositivo autorizado tras reinicio, con comprobación previa y resultado
+   `sent`, `booting`, `reachable` o `unconfirmed`, sin afirmar arranque por el envío UDP.
+4. Reglas de alertas respetan eventos/severidad/umbral/supresión/recuperación; fallos se reintentan
+   con backoff tras reiniciar; prueba auditada. SMTP/webhook caídos no bloquean DDNS ni ingestión.
+5. Destinos SSRF/redirect/rebinding se rechazan; secretos no aparecen en cola, eventos, logs o exportación.
+6. Homarr muestra estado, comprobación, último cambio IP y enlace, sin IP/MAC/nombres internos;
+   sigue las opciones de publicación. La vista privada conserva CSP y no-store.
+7. Purga configurable y acotada conserva pendientes de entrega/comandos activos/deduplicación vigente.
+   Exportación privada acotada por lista blanca, sin payload arbitrario ni configuración/secretos.
+8. Migraciones, reinicio y wheels conservan datos y políticas. Suite, lint y empaquetado correctos;
+   Docker en CI. Instalación Raspberry/Dockge reproducible documentada y release por tag preparado.
+
+## Pruebas
+
+Tests unitarios de clasificación, políticas WoL, SSRF y reglas/retención; integración con HTTP/SMTP/
+UDP/TCP falsos y Agent/Hub reales en proceso, auth/CSRF y canarios públicos. Regresión completa,
+ruff y `scripts/verify-wheels.sh`; Docker mediante CI. Sin credenciales ni consultas de integración reales.
+
+## Documentación a actualizar
+
+Operaciones, ejemplos de integraciones y entorno, README/ESTADO, convenciones, ADR e índice de slices.
+
+## Riesgos y migraciones
+
+Migraciones aditivas Agent 0006 / Hub 0007+. Paquete mágico no confirma encendido. TCP fallido no
+prueba apagado. SMTP/webhook puede duplicarse tras respuesta perdida; ID permite deduplicar.
+Las observaciones y avisos empiezan al activar la integración, sin inventar historia previa.
+La publicación del release y pruebas de hardware quedan para después del merge y despliegue del usuario.
+
+## Evidencia
+
+- 2026-10-20: planificación desde `1735a3a`, `main == origin/main`, árbol limpio; reglas y secciones
+  afectadas revisadas, sin leer `docs/deprecated/` ni `.env`. APIs verificadas en fuentes oficiales.
