@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verificar versión y que el tag pertenece a main
+        run: |
+          git merge-base --is-ancestor HEAD origin/main
+          python - <<'PY'
+          import os, runpy
+          from pathlib import Path
+          tag = os.environ['GITHUB_REF_NAME']
+          for file in ('apps/agent/dyndnsarr_agent/__init__.py', 'apps/hub/dyndnsarr_hub/__init__.py', 'packages/shared/dyndnsarr_shared/__init__.py'):
+              assert tag == 'v' + runpy.run_path(file)['__version__'], file
+          PY
+      - name: Instalar y verificar
+        run: |
+          python -m pip install -e packages/shared -e apps/agent -e apps/hub -e '.[dev]'
+          ruff check .
+          ruff format --check .
+          pytest
+          scripts/verify-wheels.sh
+          scripts/verify-compose.sh
+      - name: Construir distribución e imagen
+        run: |
+          python -m pip wheel --no-deps -w dist ./packages/shared ./apps/agent ./apps/hub
+          image="ghcr.io/${GITHUB_REPOSITORY,,}/hub:${GITHUB_REF_NAME#v}"
+          echo "RELEASE_IMAGE=$image" >> "$GITHUB_ENV"
+          docker build -f apps/hub/Dockerfile -t "$image" .
+          sha256sum dist/*.whl > dist/SHA256SUMS
+      - name: Publicar tag semántico e imagen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$RELEASE_IMAGE"
+          gh release create "$GITHUB_REF_NAME" dist/*.whl dist/SHA256SUMS --verify-tag --title "DynDNSarr $GITHUB_REF_NAME" --notes-file docs/release-v1.0.0.md

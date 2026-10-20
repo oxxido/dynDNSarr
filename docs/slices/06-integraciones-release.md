@@ -1,6 +1,6 @@
 # Slice 6 — Integraciones y release v1.0
 
-- **Estado:** planificado
+- **Estado:** en implementación
 - **Fase (arquitectura):** 5 (§10, §11, §12 y §13 casos 8, 10–12, 14)
 - **Rama:** `slice/06-integraciones-release`
 - **PR:** —
@@ -24,7 +24,7 @@ WoL por política local, alertas persistentes SMTP/webhook, resumen Homarr, rete
 ## Decisiones previas
 
 - Base: `main` actualizado, árbol limpio, PR #7 y #8 fusionados. Interpretación de «slide 6»: slice6.
-- Pi-hole v6 como versión inicial, consultada al usuario; sin respuesta se mantiene este supuesto.
+- Pi-hole v6 confirmado por el usuario durante la implementación.
   Contrato oficial: [API](https://docs.pi-hole.net/api/) y especificaciones FTL
   [auth](https://github.com/pi-hole/FTL/blob/master/src/api/docs/content/specs/auth.yaml),
   [network](https://github.com/pi-hole/FTL/blob/master/src/api/docs/content/specs/network.yaml),
@@ -66,7 +66,7 @@ WoL por política local, alertas persistentes SMTP/webhook, resumen Homarr, rete
 5. Destinos SSRF/redirect/rebinding se rechazan; secretos no aparecen en cola, eventos, logs o exportación.
 6. Homarr muestra estado, comprobación, último cambio IP y enlace, sin IP/MAC/nombres internos;
    sigue las opciones de publicación. La vista privada conserva CSP y no-store.
-7. Purga configurable y acotada conserva pendientes de entrega/comandos activos/deduplicación vigente.
+7. Purga configurable y acotada del Hub conserva pendientes de entrega/comandos activos/deduplicación vigente.
    Exportación privada acotada por lista blanca, sin payload arbitrario ni configuración/secretos.
 8. Migraciones, reinicio y wheels conservan datos y políticas. Suite, lint y empaquetado correctos;
    Docker en CI. Instalación Raspberry/Dockge reproducible documentada y release por tag preparado.
@@ -92,3 +92,28 @@ La publicación del release y pruebas de hardware quedan para después del merge
 
 - 2026-10-20: planificación desde `1735a3a`, `main == origin/main`, árbol limpio; reglas y secciones
   afectadas revisadas, sin leer `docs/deprecated/` ni `.env`. APIs verificadas en fuentes oficiales.
+
+
+**Implementación y validación local, 2026-10-20:**
+
+- Commits de implementación separados: Agent/contratos/red segura y Hub/alertas/UI/retención.
+- Pi-hole v6 confirmado por el usuario; lecturas oficiales con SID en memoria, muestras privadas,
+  fallback ante fallo; WoL reservado antes de red, cooldown persistido y auto solo tras recuperación.
+- Migraciones Agent 0006 / Hub 0007; resource_id persistido, señales/entregas/tombstones y hecho
+  público del último cambio IP (sin IP). Alertas respetan secuencia para no reabrir una recuperación
+  nueva por un fallo retrasado. No se expone payload arbitrario a avisos o exportación.
+- Primera regresión rápida ampliada: **840 passed**. Suite completa inicial: **876 passed y 1 fallo**
+  por expectativa antigua del E2E (wake_device ya existe y devuelve device_not_allowed sin política).
+  Se actualizó esa expectativa: E2E afectado + alertas, **8 passed**. Última verificación dirigida
+  de alertas/SMTP TLS real, rutas privadas/Homarr y acciones con Agent real: **27 passed**.
+- `scripts/verify-wheels.sh`: wheels 1.0.0 construidos/instalados en venv limpio; healthchecks,
+  login, siete vistas privadas, exportación, integraciones y widget/JSON Homarr correctos.
+  Temporales y caché de pip del script confinados al repositorio.
+- QA con Chrome/Playwright instalado: **12 capturas**, dispositivos/alertas a 390 y 1280 px,
+  claro/oscuro/sistema, sin desbordamiento. Transporte ASGI de pruebas y datos sintéticos;
+  TLS real HTTP/SMTP y proxy de procesos cubiertos en pruebas separadas.
+- `ruff check`, `ruff format --check`, `bash -n scripts/verify-wheels.sh` y `git diff --check` correctos.
+- Workflows de CI y release preparados. No se ejecuta Docker local ni se publica tag/imagen/release
+  antes del merge. No se ha leído `.env`, `docs/deprecated/` ni se han cambiado AGENTS.md o el servidor.
+- Comprobaciones del hardware/Pi-hole/SMTP/webhook/Homarr propios y despliegue Raspberry/Dockge
+  pendientes del administrador, según operaciones §10.5; no se simula evidencia de instalación real.

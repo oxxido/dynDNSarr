@@ -123,3 +123,15 @@ Detalle: [slices/05-hub-privado-diagnosticos.md](slices/05-hub-privado-diagnosti
 - `public_monitoring_policy` solo contiene umbrales/versiones: la capa pública sigue sin leer eventos, identidad o datos privados. Misma regla pura parametrizada para estados públicos/privados. `PublicStatusDTO` y las barras públicas no cambian.
 - Estado privado deduplicado por evidencia original, cobertura desde recogida hasta vencimiento (sin retroactividad), política histórica fija y huecos desconocidos. IDs de observación incluyen timestamp para soportar su reutilización tras purga del Agent. Métricas privadas por duración; cobertura pública por barras. Fuentes/resolvers no equivalen a disponibilidad independiente de Internet.
 - Auditoría sin cuerpos, contraseñas, cookies, CSRF o tokens. Historial/resultados libres solo se presentan mediante campos/veredictos/códigos permitidos y autoescape; códigos remotos desconocidos se resumen como remote_error.
+
+## Fijado en slice6
+
+- Integraciones LAN en `agent/integrations/`, TOML local separado del DDNS, tarea/cliente/conexión
+  propios. Política WoL fija destinos; reserva previa al envío, cooldown y command_id persistidos.
+- Hub: `alerts_repo`, `services/alert_config`, `notifications` y `maintenance`; la ingestión solo
+  registra señales. Ninguna transacción atraviesa SMTP/HTTP. Canales y reglas locales, secretos
+  exclusivamente por entorno. IDs estables, backoff y resultados sanitizados (ADR-0011).
+- `shared/outbound` fija IP validada y conserva Host/SNI, rechaza redirects/metadatos y exige
+  allowlist para redes locales. Clientes de integración con `trust_env=False` y TLS verificado.
+- Inventario y alertas solo bajo `/admin`; exportación JSON de metadatos permitidos. Homarr solo
+  proyección pública, no datos de integración ni sesiones, y se apaga con la landing.

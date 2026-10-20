@@ -7,7 +7,9 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 python="${PYTHON:-python3}"
-work="$(mktemp -d)"
+mkdir -p "$root/.pytest_cache"
+work="$(mktemp -d "$root/.pytest_cache/wheels.XXXXXX")"
+export TMPDIR="$work" PIP_CACHE_DIR="$root/.pytest_cache/pip"
 pid=""
 cleanup() {
     [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
@@ -126,8 +128,22 @@ with TestClient(app, base_url="https://hub.test", follow_redirects=False) as cli
     assert client.post("/admin/login", data={"username": "wheel-admin",
         "password": "synthetic wheel password", "csrf": csrf},
         headers={"Origin": "https://hub.test"}).status_code == 303
-    for path in ("/admin/", "/admin/records", "/admin/history", "/admin/diagnostics", "/admin/config"):
+    for path in ("/admin/", "/admin/records", "/admin/history", "/admin/diagnostics", "/admin/config", "/admin/integrations", "/admin/alerts", "/admin/api/v1/export"):
         assert client.get(path).status_code == 200, path
     assert client.get("/openapi.json").status_code == 404
 print("OK: hub instalado desde wheel autentica y sirve todas las vistas privadas")
+PYTEST
+
+# Slice6: adaptadores/contratos nuevos y widget público incluidos en wheels.
+"$work/venv/bin/python" -c 'import dyndnsarr_agent.integrations.worker, dyndnsarr_agent.integrations.pihole, dyndnsarr_hub.services.notifications, dyndnsarr_shared.outbound'
+"$work/venv/bin/python" - "$work/homarr-wheel" <<'PYTEST'
+import sys
+from pathlib import Path
+from fastapi.testclient import TestClient
+from dyndnsarr_hub.config import Settings
+from dyndnsarr_hub.main import create_app
+with TestClient(create_app(Settings(data_dir=Path(sys.argv[1])))) as client:
+    assert client.get('/public/homarr').status_code == 200
+    assert client.get('/public/v1/homarr').json()['state'] == 'unknown'
+print('OK: integraciones y Homarr incluidos en wheels')
 PYTEST
