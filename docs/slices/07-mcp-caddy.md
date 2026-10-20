@@ -1,9 +1,9 @@
 # Slice 7 — API de servicios, MCP y Caddy (v1.1)
 
-- **Estado:** en implementación
+- **Estado:** en revisión
 - **Fase (arquitectura):** 6
 - **Rama:** `slice/07-mcp-caddy`
-- **PR:** —
+- **PR:** [#10](https://github.com/oxxido/dynDNSarr/pull/10)
 
 ## Objetivo
 
@@ -102,4 +102,13 @@ API; recargar un Caddyfile estático puede perderlos. Actualizar Agent para DNS 
 - Suite completa local: **924 passed** (284,92 s), incluyendo e2e con procesos reales.
 - Validación posterior del MCP operativo: **25 passed**, con cliente SDK stdio → Hub TLS →
   Agent TLS real; `check_dns` dirigido y repetición del UUID crean un único comando.
-- Verificación final tras los últimos ajustes y PR pendientes.
+- Verificación final tras los ajustes: **899 passed, 28 deselected** (`-m 'not e2e'`,
+  64,53 s); incluye las pruebas nuevas posteriores a la suite completa. Wheels limpios
+  repetidos tras los ajustes: correctos. Lint/formato y diff sin errores.
+- Rama subida y PR [#10](https://github.com/oxxido/dynDNSarr/pull/10) abierto contra `main`.
+  CI de la entrega en [checks](https://github.com/oxxido/dynDNSarr/pull/10/checks):
+  Python 3.11/3.12, wheels e imagen Docker. El PR no equivale a merge.
+- Criterios 1–14 cubiertos por configuración, pruebas y guía. Caddy se simula en tests;
+  la validación de Caddy/ACME, conectividad y políticas en producción queda para el operador
+  según [operaciones §11.5](../operations.md#115-comprobación-manual-en-la-instalación).
+- No se modificó `.env`, servidor, proxy ni integraciones reales. Sin merge, despliegue o tag.
