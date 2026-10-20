@@ -1,6 +1,6 @@
 # Slice 4 — Landing pública real
 
-- **Estado:** en revisión
+- **Estado:** fusionado
 - **Fase (arquitectura):** 3 ([architecture.md](../architecture.md) §8, §9 «UI pública», §13 casos 12, 13 y 15; §14 A5 y A7)
 - **Rama:** `slice/04-landing-publica`
 - **PR:** [#6](https://github.com/oxxido/dynDNSarr/pull/6)
@@ -125,6 +125,8 @@ Si el slice resulta grande, se puede cortar como 4a (pasos 1–7: proyección, r
 - **Migración 0004:** crea tablas nuevas, sin tocar las existentes. Las renovaciones anteriores a esta versión no se proyectan (solo desde la ingestión nueva): la lista arranca vacía y se llena con las siguientes. Respaldar `hub.db` antes de actualizar (operaciones §4).
 
 ## Evidencia
+
+**Merge verificado el 2026-10-20:** `gh pr view 6` confirma PR #6 `MERGED`, fusionado a las 08:50:41 UTC en `main` con commit `e7a20c54a8074012ad751b09cffdcd8c085ebe99`. La fusión no acredita las comprobaciones manuales pendientes que se detallan abajo.
 
 Ejecutado el 2026-10-19 en Python 3.12 (venv local; la CI cubre 3.11).
 

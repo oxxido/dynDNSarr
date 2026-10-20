@@ -104,3 +104,30 @@ if len(sys.argv) <= 2:
     print("AVISO: el repositorio aún no trae los PNG de la mascota (slice 4, paso 9); no se comprobaron", file=sys.stderr)
 PY
 kill "$pid"; wait "$pid" 2>/dev/null || true; pid=""
+
+# Slice5: autenticación, migraciones y todas las plantillas privadas desde el wheel limpio.
+"$work/venv/bin/python" - "$work/private-wheel" <<'PYTEST'
+import sys
+from pathlib import Path
+from fastapi.testclient import TestClient
+from dyndnsarr_hub.auth import sessions
+from dyndnsarr_hub.config import Settings
+from dyndnsarr_hub.main import create_app
+from dyndnsarr_hub.clock import utc_now
+settings = Settings(data_dir=Path(sys.argv[1]), admin_origin="https://hub.test")
+app = create_app(settings)
+with TestClient(app, base_url="https://hub.test", follow_redirects=False) as client:
+    client.portal.call(lambda: sessions.set_password(app.state.db, "wheel-admin",
+        "synthetic wheel password", utc_now(), create=True))
+    login = client.get("/admin/login")
+    assert login.status_code == 200 and 'name="password"' in login.text
+    import re
+    csrf = re.search(r'name="csrf" value="([^"]+)"', login.text)[1]
+    assert client.post("/admin/login", data={"username": "wheel-admin",
+        "password": "synthetic wheel password", "csrf": csrf},
+        headers={"Origin": "https://hub.test"}).status_code == 303
+    for path in ("/admin/", "/admin/records", "/admin/history", "/admin/diagnostics", "/admin/config"):
+        assert client.get(path).status_code == 200, path
+    assert client.get("/openapi.json").status_code == 404
+print("OK: hub instalado desde wheel autentica y sirve todas las vistas privadas")
+PYTEST

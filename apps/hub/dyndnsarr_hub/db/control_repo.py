@@ -52,13 +52,18 @@ _COMMAND = "command_id, agent_id, type, requested_by, created_at, expires_at, st
 
 
 def add_desired_version(
-    conn: sqlite3.Connection, agent_id: str, content: dict[str, Any], now: datetime
+    conn: sqlite3.Connection,
+    agent_id: str,
+    content: dict[str, Any],
+    now: datetime,
+    minimum_version: int = 1,
 ) -> DesiredVersion:
     """Crea la versión siguiente (monótona por agente). La abre en transacción quien llama."""
     version = conn.execute(
         "SELECT COALESCE(max(version), 0) + 1 FROM desired_config_versions WHERE agent_id = ?",
         (agent_id,),
     ).fetchone()[0]
+    version = max(version, minimum_version)
     content_hash = config_hash(content)
     conn.execute(
         f"INSERT INTO desired_config_versions ({_DESIRED}) VALUES (?, ?, ?, ?, ?)",
@@ -177,3 +182,11 @@ def update_command_from_agent(
             agent_id,
         ),
     )
+
+
+def desired_version(conn, agent_id, version):
+    row = conn.execute(
+        f"SELECT {_DESIRED} FROM desired_config_versions WHERE agent_id = ? AND version = ?",
+        (agent_id, version),
+    ).fetchone()
+    return DesiredVersion(*row[:3], json.loads(row[3]), row[4]) if row else None

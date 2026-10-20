@@ -28,7 +28,6 @@ from dyndnsarr_hub.services.agent_client import (
 from dyndnsarr_shared.control import (
     CommandRequest,
     CommandStatus,
-    ConfigPut,
     canonical_json,
 )
 from dyndnsarr_shared.db import connect, migrate, transaction
@@ -256,8 +255,11 @@ def _send_config(
     transport: httpx.AsyncBaseTransport | None,
 ) -> int:
     url, token = _api_target(conn, desired.agent_id)
-    put = ConfigPut(version=desired.version, hash=desired.content_hash, content=desired.content)
-    reply = _call_agent(settings, url, token, transport, lambda client: client.put_config(put))
+    from dyndnsarr_hub.services.control import send_config
+
+    reply = _call_agent(
+        settings, url, token, transport, lambda client: send_config(conn, client, desired)
+    )
     if reply.value is None:
         detail = reply.error_code or reply.api_error or "bad_response"
         print(
@@ -267,16 +269,6 @@ def _send_config(
         )
         return 1
     result = reply.value
-    with transaction(conn):
-        control_repo.record_config_result(
-            conn,
-            desired.agent_id,
-            desired.version,
-            desired.content_hash,
-            result.result,
-            result.code,
-            utc_now(),
-        )
     if result.result == "applied":
         print(f"Versión {desired.version}: aplicada por el Agent.")
         return 0
@@ -410,15 +402,9 @@ def _apply_command_reply(
 ) -> None:
     """Refleja la respuesta del `POST`: el estado del Agent, o su rechazo explícito (el comando
     nunca se ejecutará, así que `failed` es definitivo)."""
-    with transaction(conn):
-        if reply.value is not None:
-            control_repo.update_command_from_agent(
-                conn, command_id, agent_id, reply.value.status, reply.value.result
-            )
-        elif reply.api_error is not None:
-            control_repo.update_command_from_agent(
-                conn, command_id, agent_id, "failed", {"code": reply.api_error}
-            )
+    from dyndnsarr_hub.services.control import record_command_reply
+
+    record_command_reply(conn, command_id, agent_id, reply)
 
 
 def _command(
@@ -493,6 +479,27 @@ def _command_show(
     return 0
 
 
+def _admin_password(settings, args):
+    from getpass import getpass
+
+    from dyndnsarr_hub.auth.sessions import set_password
+
+    password = getpass("Contraseña (12–128 caracteres): ")
+    if password != getpass("Repite la contraseña: "):
+        raise CliError("Las contraseñas no coinciden")
+    conn = _open_db(settings)
+    try:
+        set_password(
+            conn, args.username, password, utc_now(), create=args.command == "admin-create"
+        )
+    except ValueError as exc:
+        raise CliError(str(exc)) from None
+    finally:
+        conn.close()
+    print("Administrador actualizado; sesiones y bloqueo revocados.")
+    return 0
+
+
 _COMMANDS = {
     "agent-add": _agent_add,
     "agent-rotate": _agent_rotate,
@@ -518,6 +525,9 @@ def run(argv: Sequence[str], transport: httpx.AsyncBaseTransport | None = None) 
     parser = argparse.ArgumentParser(prog="dyndnsarr-hub")
     sub = parser.add_subparsers(dest="command", metavar="comando")
     sub.add_parser("serve", help="sirve el Hub (por defecto, sin comando)")
+    for name in ("admin-create", "admin-password"):
+        admin = sub.add_parser(name, help="aprovisiona o recupera al administrador web")
+        admin.add_argument("username")
     add = sub.add_parser("agent-add", help="registra un agente y emite su primer token")
     add.add_argument("agent_id")
     rotate = sub.add_parser("agent-rotate", help="emite un token nuevo sin revocar los anteriores")
@@ -562,6 +572,8 @@ def run(argv: Sequence[str], transport: httpx.AsyncBaseTransport | None = None) 
         settings = _load_settings()
         if args.command in _NETWORK_COMMANDS:
             return _NETWORK_COMMANDS[args.command](settings, args, transport)
+        if args.command in ("admin-create", "admin-password"):
+            return _admin_password(settings, args)
         return _COMMANDS[args.command](settings, args)
     except CliError as exc:
         print(exc, file=sys.stderr)

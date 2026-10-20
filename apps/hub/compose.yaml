@@ -21,6 +21,8 @@ services:
       DYNDNSARR_HUB_PUBLIC_ENABLED: ${DYNDNSARR_HUB_PUBLIC_ENABLED:-true}
       DYNDNSARR_HUB_PUBLIC_SHOW_DOMAINS: ${DYNDNSARR_HUB_PUBLIC_SHOW_DOMAINS:-false}
       DYNDNSARR_HUB_STATUS_REFRESH_SECONDS: ${DYNDNSARR_HUB_STATUS_REFRESH_SECONDS:-60}
+      # Origen HTTPS visto por el navegador. Vacío: login deshabilitado hasta configurarlo (§9).
+      DYNDNSARR_HUB_ADMIN_ORIGIN: ${DYNDNSARR_HUB_ADMIN_ORIGIN:-}
     volumes:
       - hub-data:/data
 

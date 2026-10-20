@@ -414,3 +414,236 @@ def test_config_reset_on_the_agent_is_seen_by_the_hub_and_it_can_resend(tmp_path
             assert w.observed().config_version == 1
 
     asyncio.run(go())
+
+
+@asynccontextmanager
+async def admin_web(w):
+    import re
+
+    from dyndnsarr_hub.auth import sessions
+    from dyndnsarr_hub.clock import utc_now
+    from dyndnsarr_hub.services import status_refresher
+
+    w.hub_app.state.settings.admin_origin = "https://hub.test"
+    w.hub_app.state.agent_transport = httpx.ASGITransport(app=w.agent_app)
+    sessions.set_password(w.hub, "admin", "una contraseña de prueba larga", utc_now(), create=True)
+    async with httpx.AsyncClient(transport=w.hub_app.state.agent_transport) as agent_http:
+        await status_refresher.refresh_once(w.hub, agent_http, 60)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=w.hub_app), base_url="https://hub.test"
+    ) as web:
+        response = await web.get("/admin/login")
+        token = re.search(r'name="csrf" value="([^"]+)"', response.text)[1]
+        response = await web.post(
+            "/admin/login",
+            data={"username": "admin", "password": "una contraseña de prueba larga", "csrf": token},
+            headers={"Origin": "https://hub.test"},
+        )
+        assert response.status_code == 303
+        web.headers.update(
+            {
+                "Origin": "https://hub.test",
+                "X-CSRF-Token": sessions.csrf(web.cookies.get(sessions.COOKIE)),
+            }
+        )
+        yield web
+
+
+def web_operation(w, web, action, **data):
+    from dyndnsarr_hub.auth import sessions
+    from dyndnsarr_hub.clock import utc_now
+    from dyndnsarr_hub.db import admin_repo
+
+    agent = None if action == "policy" else AGENT_ID
+    key = admin_repo.issue_operation(
+        w.hub, sessions.digest(web.cookies.get(sessions.COOKIE)), agent, action, utc_now()
+    )
+    return {"operation_id": key, **({"agent_id": agent} if agent else {}), **data}
+
+
+def test_admin_pages_real_config_and_actions_are_idempotent(tmp_path):
+    async def go():
+        async with world(tmp_path) as w, admin_web(w) as web:
+            for path in [
+                "/admin/",
+                "/admin/records",
+                "/admin/history",
+                "/admin/diagnostics",
+                "/admin/config",
+            ]:
+                response = await web.get(path)
+                assert response.status_code == 200, response.text
+                assert "canary-key" not in response.text
+            page = await web.get("/admin/config")
+            assert 'name="active_version" value="0"' in page.text
+            assert 'name="verify_retry_seconds" type="number" min="1" value="60"' in page.text
+            assert 'name="verify_timeout_seconds" type="number" min="1" value="900"' in page.text
+            body = web_operation(
+                w, web, "config", active_version=0, active_hash="", desired_version=0, content=GOOD
+            )
+            response = await web.post("/admin/api/v1/config", json=body)
+            assert response.status_code == 200, response.text
+            assert response.json()["reference"] == "1" and w.holder.version == 1
+            duplicate = await web.post("/admin/api/v1/config", json=body)
+            assert duplicate.json()["duplicate"] is True and w.agent_versions() == [(1,)]
+            altered = {**body, "content": {"check_interval_seconds": 600}}
+            assert (await web.post("/admin/api/v1/config", json=altered)).status_code == 409
+            stale = web_operation(
+                w, web, "config", active_version=0, active_hash="", desired_version=0, content=GOOD
+            )
+            assert (await web.post("/admin/api/v1/config", json=stale)).status_code == 409
+            bad = web_operation(
+                w,
+                web,
+                "config",
+                active_version=1,
+                active_hash=w.holder.content_hash,
+                desired_version=1,
+                content={"check_interval_seconds": 1},
+            )
+            rejected = await web.post("/admin/api/v1/config", json=bad)
+            assert rejected.json()["result"] == "rejected"
+            assert w.holder.version == 1
+            forbidden = web_operation(w, web, "config", content={"providers": {}})
+            assert (await web.post("/admin/api/v1/config", json=forbidden)).status_code == 400
+            w.public_ip["ip"] = "2.3.4.5"
+            body = web_operation(w, web, "command", type="sync_ddns")
+            submitted = await web.post("/admin/api/v1/command", json=body)
+            assert submitted.status_code == 200, submitted.text
+            command_id = submitted.json()["reference"]
+            again = await web.post("/admin/api/v1/command", json=body)
+            assert again.json()["reference"] == command_id and again.json()["duplicate"]
+            await w.wait_command(command_id)
+            assert [p["host"] for p in w.provider_calls] == ["m.example.com"]
+            assert "new.example.com" not in [p["host"] for p in w.provider_calls]
+            await w.deliver()
+            command = control_repo.get_command(w.hub, command_id)
+            assert command.status == "succeeded" and command.requested_by == "admin:1"
+            csrf_bad = await web.post(
+                "/admin/api/v1/command", json=body, headers={"X-CSRF-Token": "wrong"}
+            )
+            assert csrf_bad.status_code == 403
+
+    asyncio.run(go())
+
+
+def test_admin_lost_response_preserves_operation_and_reconciles(tmp_path):
+    class LoseReply(httpx.AsyncBaseTransport):
+        def __init__(self, app):
+            self.inner = httpx.ASGITransport(app=app)
+            self.lost = False
+
+        async def handle_async_request(self, request):
+            response = await self.inner.handle_async_request(request)
+            if request.method == "POST" and request.url.path.endswith("/commands"):
+                self.lost = True
+                raise httpx.ReadTimeout("canary lost response")
+            return response
+
+    async def go():
+        async with world(tmp_path) as w, admin_web(w) as web:
+            transport = LoseReply(w.agent_app)
+            w.hub_app.state.agent_transport = transport
+            body = web_operation(w, web, "command", type="check_dns")
+            response = await web.post("/admin/api/v1/command", json=body)
+            command_id = response.json()["reference"]
+            assert transport.lost and response.json()["result"] == "uncertain"
+            assert (await web.post("/admin/api/v1/command", json=body)).json()["duplicate"]
+            await w.wait_command(command_id)
+            assert w.agent.execute("SELECT count(*) FROM commands").fetchone()[0] == 1
+            w.hub_app.state.agent_transport = httpx.ASGITransport(app=w.agent_app)
+            refresh = web_operation(w, web, "command-refresh", command_id=command_id)
+            assert (
+                await web.post("/admin/api/v1/command-refresh", json=refresh)
+            ).status_code == 200
+            assert control_repo.get_command(w.hub, command_id).status == "succeeded"
+            audit = str(w.hub.execute("SELECT * FROM audit_log").fetchall())
+            assert "canary lost response" not in audit
+            assert w.api_token not in audit and "canary-key" not in audit
+
+    asyncio.run(go())
+
+
+def test_private_refresh_deduplicates_and_old_agent_does_not_break_public(tmp_path):
+    from dyndnsarr_hub.db import private_repo
+    from dyndnsarr_hub.services import status_refresher
+
+    async def go():
+        async with world(tmp_path) as w, admin_web(w) as web:
+            before = w.hub.execute("SELECT count(*) FROM private_samples").fetchone()[0]
+            before_observations = w.hub.execute(
+                "SELECT count(*) FROM private_observations"
+            ).fetchone()[0]
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=w.agent_app)) as client:
+                await status_refresher.refresh_once(w.hub, client, 60)
+            assert w.hub.execute("SELECT count(*) FROM private_samples").fetchone()[0] == before
+            assert (
+                w.hub.execute("SELECT count(*) FROM private_observations").fetchone()[0]
+                == before_observations
+            )
+
+            class OldAgent(httpx.AsyncBaseTransport):
+                async def handle_async_request(self, request):
+                    if request.url.path.endswith(("/config", "/diagnostics")):
+                        return httpx.Response(404, text="old")
+                    return await httpx.ASGITransport(app=w.agent_app).handle_async_request(request)
+
+            async with httpx.AsyncClient(transport=OldAgent()) as client:
+                assert await status_refresher.refresh_once(w.hub, client, 60) == {AGENT_ID: None}
+            value = private_repo.snapshot(w.hub, AGENT_ID)
+            assert value["config_error"] == "bad_response" and value["status_error"] is None
+            assert (await web.get("/public/v1/status")).status_code == 200
+            assert (await web.get("/admin/config")).status_code == 200
+
+    asyncio.run(go())
+
+
+def test_admin_policy_persists_and_rejected_monitoring_only_sync_has_no_effect(tmp_path):
+    from dyndnsarr_hub.clock import utc_now
+    from dyndnsarr_hub.db import private_repo, public_repo
+    from dyndnsarr_hub.public.builder import build_dto
+    from dyndnsarr_hub.services import status_refresher
+
+    async def go():
+        async with world(tmp_path) as w, admin_web(w) as web:
+            before = w.hub.execute("SELECT * FROM private_samples ORDER BY observed_at").fetchall()
+            body = web_operation(
+                w,
+                web,
+                "policy",
+                observation_max_seconds=1200,
+                critical_mismatch_seconds=30,
+                stale_refresh_factor=5,
+            )
+            assert (await web.post("/admin/api/v1/policy", json=body)).status_code == 200
+            assert public_repo.monitoring_policy(w.hub).observation_max_seconds == 1200
+            assert (await web.post("/admin/api/v1/policy", json=body)).json()["duplicate"]
+            assert public_repo.monitoring_policy(w.hub).version == 2
+            assert (
+                w.hub.execute("SELECT * FROM private_samples ORDER BY observed_at").fetchall()
+                == before
+            )
+            invalid = web_operation(
+                w,
+                web,
+                "policy",
+                observation_max_seconds=1,
+                critical_mismatch_seconds=30,
+                stale_refresh_factor=5,
+            )
+            assert (await web.post("/admin/api/v1/policy", json=invalid)).status_code == 400
+            assert public_repo.monitoring_policy(w.hub).version == 2
+            assert build_dto(w.hub, utc_now(), w.hub_app.state.settings)
+            # Se cambia explícitamente a solo monitorización y se refresca la caché del Hub.
+            reply = await w.push({"records": [{"name": "m.example.com", "mode": "monitored"}]})
+            assert reply.value.result == "applied"
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=w.agent_app)) as http:
+                await status_refresher.refresh_once(w.hub, http, 60)
+            calls = len(w.provider_calls)
+            body = web_operation(w, web, "command", type="sync_ddns")
+            assert (await web.post("/admin/api/v1/command", json=body)).status_code == 409
+            assert len(w.provider_calls) == calls
+            assert "Sincronizar" not in (await web.get("/admin/records")).text
+            assert private_repo.snapshot(w.hub, AGENT_ID)["status_error"] is None
+
+    asyncio.run(go())

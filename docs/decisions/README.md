@@ -12,3 +12,5 @@ Una decisión que debe sobrevivir a un slice se registra aquí: `NNNN-titulo-cor
 | [0006](0006-control-hub-agent.md) | Control Hub → Agent: TLS propio del Agent, token Bearer, configuración versionada y comandos idempotentes |
 | [0007](0007-landing-publica.md) | Landing pública: proyección sin IP completa, estado derivado al leer, historial observado y publicación con CSP |
 | [0008](0008-animacion-mascota.md) | Animación de la mascota: cara SVG superpuesta, flotación, sombra y burbujas |
+| [0009](0009-administracion-web.md) | Administrador local, sesiones, CSRF, auditoría e idempotencia web |
+| [0010](0010-monitorizacion-privada.md) | Diagnóstico privado, política común de estados y uptime por duración observada |

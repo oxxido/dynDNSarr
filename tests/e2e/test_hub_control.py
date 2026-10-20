@@ -547,3 +547,150 @@ def test_public_landing_shows_real_state_without_private_data_and_goes_unknown(s
         response = httpx.get(f"{base}{path}", timeout=5)
         assert (response.status_code, response.content) == (404, missing.content), path
     assert httpx.get(f"{base}/healthz", timeout=5).status_code == 200
+
+
+def test_private_hub_https_login_config_command_restart_and_logout(stack):
+    """Navegador HTTP simulado, con cookies Secure y ambas conexiones TLS verificadas."""
+    from pathlib import Path
+
+    from dyndnsarr_hub.auth.sessions import COOKIE
+
+    password = "contraseña e2e de administrador"
+    created = subprocess.run(
+        [sys.executable, "-m", "dyndnsarr_hub", "admin-create", "admin"],
+        input=password + "\n" + password + "\n",
+        env=stack.hub_env(),
+        capture_output=True,
+        text=True,
+    )
+    assert created.returncode == 0 and password not in created.stdout + created.stderr
+    port = free_port()
+    origin = f"https://127.0.0.1:{port}"
+    stack.start_hub(DYNDNSARR_HUB_ADMIN_ORIGIN=origin)
+    stack.start_agent()
+    with (stack.tmp / "proxy.log").open("w") as log:
+        proxy = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "https_proxy:app",
+                "--app-dir",
+                str(Path(__file__).parent),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--ssl-certfile",
+                str(stack.cert_file),
+                "--ssl-keyfile",
+                str(stack.key_file),
+            ],
+            env={**os.environ, "TEST_HUB_UPSTREAM": f"http://127.0.0.1:{stack.hub_port}"},
+            stdout=subprocess.DEVNULL,
+            stderr=log,
+        )
+        try:
+            wait_for_health(proxy, origin, stack.ca_file)
+            with httpx.Client(
+                base_url=origin, verify=build_ssl_context(stack.ca_file), timeout=15
+            ) as browser:
+                assert browser.get("/admin/").status_code == 303
+                html = browser.get("/admin/login").text
+                csrf = re.search(r'name="csrf" value="([^"]+)"', html)[1]
+                response = browser.post(
+                    "/admin/login",
+                    data={"username": "admin", "password": password, "csrf": csrf},
+                    headers={"Origin": origin},
+                )
+                assert response.status_code == 303
+                raw_cookie = browser.cookies.get(COOKIE)
+                assert "Secure" in response.headers["set-cookie"]
+                wait_until(
+                    lambda: bool(
+                        stack.hub_rows(
+                            "SELECT 1 FROM private_agent_snapshot WHERE config IS NOT NULL"
+                        )
+                    )
+                )
+
+                def form(path, action):
+                    page = browser.get(path)
+                    assert page.status_code == 200
+                    body = re.search(
+                        r'action="/admin/actions/' + action + r'"[^>]*>(.*?)</form>',
+                        page.text,
+                        re.S,
+                    )[1]
+                    return dict(
+                        re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)">', body)
+                    )
+
+                body = form("/admin/config", "config")
+                body.update(
+                    check_interval_seconds="120",
+                    verify_retry_seconds="1",
+                    verify_timeout_seconds="900",
+                    samples_days="30",
+                    events_days="365",
+                    ip_sources="\n".join(s.url for s in stack.sources),
+                    resolvers=stack.fake_dns.resolver,
+                    record_count="2",
+                    record_0_name="old.example.com",
+                    record_0_mode="monitored",
+                    record_0_enabled="on",
+                    record_0_provider="",
+                    record_1_name="m.example.com",
+                    record_1_mode="managed",
+                    record_1_enabled="on",
+                    record_1_provider="dondominio",
+                )
+                response = browser.post(
+                    "/admin/actions/config", data=body, headers={"Origin": origin}
+                )
+                assert response.status_code == 303
+                assert stack.api("GET", "/config").json()["version"] == 1
+                again = browser.post("/admin/actions/config", data=body, headers={"Origin": origin})
+                assert again.status_code == 303
+                assert stack.agent_rows("SELECT count(*) FROM configuration_versions") == [(1,)]
+                body = form("/admin/records", "command")
+                body["type"] = "check_dns"
+                response = browser.post(
+                    "/admin/actions/command", data=body, headers={"Origin": origin}
+                )
+                assert response.status_code == 303
+                command_page = response.headers["location"]
+                command_id = command_page.rsplit("/", 1)[1]
+                wait_until(
+                    lambda: (
+                        stack.api("GET", "/commands/" + command_id).json()["status"] == "succeeded"
+                    )
+                )
+                refresh = form(command_page, "command-refresh")
+                response = browser.post(
+                    "/admin/actions/command-refresh", data=refresh, headers={"Origin": origin}
+                )
+                assert response.status_code == 303
+                assert "succeeded" in browser.get(command_page).text
+                before = checks_of(stack, "old.example.com")
+                stack.stop_hub()
+                wait_until(lambda: checks_of(stack, "old.example.com") > before)
+                stack.start_hub(DYNDNSARR_HUB_ADMIN_ORIGIN=origin)
+                assert browser.get("/admin/").status_code == 200
+                assert browser.cookies.get(COOKIE) == raw_cookie
+                public = browser.get("/").text + browser.get("/public/v1/status").text
+                for secret in (password, stack.api_token, stack.hub_token, DD_KEY, A, "admin"):
+                    assert secret not in public
+                logout_html = browser.get("/admin/").text
+                csrf = re.search(r'name="csrf" value="([^"]+)"', logout_html)[1]
+                assert (
+                    browser.post(
+                        "/admin/logout", data={"csrf": csrf}, headers={"Origin": origin}
+                    ).status_code
+                    == 303
+                )
+                browser.cookies.set(COOKIE, raw_cookie)
+                assert browser.get("/admin/api/v1/status").status_code == 401
+                assert password not in stack.hub_log.read_text()
+        finally:
+            stop(proxy)

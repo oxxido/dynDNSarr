@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,6 +24,29 @@ class Settings(BaseSettings):
     public_show_domains: bool = False
     # Cada cuánto consulta el Hub el estado de cada Agent con API configurada.
     status_refresh_seconds: int = Field(60, ge=15)
+
+    # Origen HTTPS que presenta el navegador; el Hub puede estar detrás de un proxy HTTP.
+    admin_origin: str | None = None
+
+    @field_validator("admin_origin")
+    @classmethod
+    def _admin_origin(cls, value):
+        from urllib.parse import urlsplit
+
+        if value in (None, ""):
+            return None
+        parts = urlsplit(value)
+        if (
+            parts.scheme != "https"
+            or not parts.hostname
+            or parts.username
+            or parts.password
+            or parts.path not in ("", "/")
+            or parts.query
+            or parts.fragment
+        ):
+            raise ValueError("ADMIN_ORIGIN debe ser un origen HTTPS sin ruta ni credenciales")
+        return value.rstrip("/")
 
     @property
     def db_path(self) -> Path:

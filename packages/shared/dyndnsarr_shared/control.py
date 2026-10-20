@@ -105,3 +105,67 @@ class AgentStatus(_Model):
     last_check_at: Instant | None
     records: list[RecordStatus]
     hub: HubLinkStatus | None
+
+
+class ConfigRecord(_Model):
+    name: Annotated[str, Field(max_length=253)]
+    mode: Literal["monitored", "managed"]
+    provider: Literal["dondominio"] | None = None
+    enabled: bool = True
+
+
+class ConfigSources(_Model):
+    urls: Annotated[list[Annotated[str, Field(max_length=2048)]], Field(max_length=100)]
+
+
+class ConfigDns(_Model):
+    resolvers: Annotated[list[Annotated[str, Field(max_length=128)]], Field(max_length=100)]
+
+
+class ConfigRetention(_Model):
+    samples_days: int = 30
+    events_days: int = 365
+
+
+class ConfigUpdate(_Model):
+    verify_retry_seconds: int = 60
+    verify_timeout_seconds: int = 900
+
+
+class ControlledConfig(_Model):
+    """Forma administrable, sin validar las reglas del motor que pertenecen al Agent."""
+
+    check_interval_seconds: int | None = None
+    ip_sources: ConfigSources | None = None
+    dns: ConfigDns | None = None
+    retention: ConfigRetention | None = None
+    update: ConfigUpdate | None = None
+    records: Annotated[list[ConfigRecord], Field(max_length=1000)] | None = None
+
+
+class EffectiveConfig(_Model):
+    version: Annotated[int, Field(ge=0)]
+    hash: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None
+    content: ControlledConfig
+
+
+class DiagnosticObservation(_Model):
+    id: Annotated[int, Field(ge=1)]
+    kind: Literal["ip", "dns"]
+    observed_at: Instant
+    record_name: Annotated[str, Field(max_length=253)] | None = None
+    source: Annotated[str, Field(max_length=2048)]
+    ips: Annotated[list[Annotated[str, Field(max_length=45)]], Field(max_length=100)] = []
+    error_code: Annotated[str, Field(max_length=128)] | None = None
+
+
+class RecordDiagnostic(_Model):
+    name: Annotated[str, Field(max_length=253)]
+    accepted_at: Instant | None
+    verified_at: Instant | None
+
+
+class DiagnosticPage(_Model):
+    observations: Annotated[list[DiagnosticObservation], Field(max_length=100)]
+    records: Annotated[list[RecordDiagnostic], Field(max_length=1000)] = []
+    next_cursor: Annotated[str, Field(max_length=1024)] | None = None

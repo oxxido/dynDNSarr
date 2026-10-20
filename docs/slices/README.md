@@ -20,7 +20,7 @@ Un slice es la unidad de trabajo: una rama y un PR. El orden y el alcance genera
 | 2b | 1 | Actualización DDNS `managed` (DonDominio) ([plan](02b-actualizacion-ddns-managed.md)) | fusionado | `slice/02b-actualizacion-ddns-managed` | #3 |
 | 3a | 2 | Enlace seguro y entrega de eventos, Agent → Hub ([plan](03a-enlace-seguro-eventos.md)) | fusionado | `slice/03a-enlace-seguro-eventos` | #4 |
 | 3b | 2 | Control Hub → Agent: estado, configuración versionada y comandos ([plan](03b-control-hub-agent.md)) | fusionado | `slice/03b-control-hub-agent` | #5 |
-| 4 | 3 | Landing pública real ([plan](04-landing-publica.md)) | en revisión | `slice/04-landing-publica` | #6 |
-| 5 | 4 | Hub privado y diagnósticos | pendiente | — | — |
+| 4 | 3 | Landing pública real ([plan](04-landing-publica.md)) | fusionado | `slice/04-landing-publica` | #6 |
+| 5 | 4 | Hub privado y diagnósticos ([plan](05-hub-privado-diagnosticos.md)) | en revisión | `slice/05-hub-privado-diagnosticos` | #7 |
 | 6 | 5 | Integraciones y release v1.0 | pendiente | — | — |
 | 7 | 6 | v1.1 (MCP y Caddy) | pendiente | — | — |

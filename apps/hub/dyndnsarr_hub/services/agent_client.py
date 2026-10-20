@@ -16,6 +16,8 @@ from dyndnsarr_shared.control import (
     CommandStatus,
     ConfigPut,
     ConfigResult,
+    DiagnosticPage,
+    EffectiveConfig,
 )
 from dyndnsarr_shared.events import ErrorResponse
 from dyndnsarr_shared.tls import build_ssl_context, has_tls_error
@@ -24,6 +26,51 @@ logger = logging.getLogger(__name__)
 
 TIMEOUT_SECONDS = 10.0
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1"}
+
+_SAFE_CODES = frozenset(
+    {
+        "timeout",
+        "connect_error",
+        "tls_error",
+        "auth_failed",
+        "server_error",
+        "bad_response",
+        "tls_config",
+        "invalid_url",
+        "no_status",
+        "not_found",
+        "invalid_request",
+        "body_too_large",
+        "unsupported_command",
+        "invalid_command",
+        "command_conflict",
+        "queue_full",
+        "busy",
+        "interrupted",
+        "internal_error",
+        "expired",
+        "ip_uncertain",
+        "provider_failed",
+        "hash_mismatch",
+        "stale_version",
+        "version_conflict",
+        "forbidden_section",
+        "invalid_config",
+        "missing_credentials",
+        "no_managed_records",
+        "invalid_query",
+        "invalid_cursor",
+    }
+)
+
+
+def safe_code(value):
+    return (
+        value
+        if isinstance(value, str) and value in _SAFE_CODES
+        else ("remote_error" if value is not None else None)
+    )
+
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -85,6 +132,15 @@ class AgentClient:
     async def status(self) -> Reply[AgentStatus]:
         return await self._call("GET", "/status", AgentStatus)
 
+    async def config(self) -> Reply[EffectiveConfig]:
+        return await self._call("GET", "/config", EffectiveConfig)
+
+    async def diagnostics(self, cursor: str | None = None) -> Reply[DiagnosticPage]:
+        from urllib.parse import urlencode
+
+        query = "?" + urlencode({"cursor": cursor}) if cursor else ""
+        return await self._call("GET", "/diagnostics" + query, DiagnosticPage)
+
     async def put_config(self, put: ConfigPut) -> Reply[ConfigResult]:
         return await self._call("PUT", "/config", ConfigResult, put)
 
@@ -121,4 +177,4 @@ class AgentClient:
             error = ErrorResponse.model_validate_json(response.content)
         except ValidationError:
             return Reply(error_code="bad_response", http_status=status)
-        return Reply(http_status=status, api_error=error.code)
+        return Reply(http_status=status, api_error=safe_code(error.code))

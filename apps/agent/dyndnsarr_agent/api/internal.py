@@ -216,3 +216,47 @@ async def command_status(command_id: str, request: Request):
     if command is None:
         return _error(404, "request_error", "not_found", "Comando desconocido")
     return _command_status(command)
+
+
+@router.get("/config", response_model=None)
+async def get_config(request: Request):
+    if (denied := _denied(request)) is not None:
+        return denied
+    from dyndnsarr_shared.control import EffectiveConfig
+
+    holder = request.app.state.holder
+    config = holder.config
+    content = {
+        "check_interval_seconds": config.check_interval_seconds,
+        "ip_sources": config.ip_sources.model_dump(),
+        "dns": {"resolvers": [r.label for r in config.dns.resolvers]},
+        "retention": config.retention.model_dump(),
+        "update": config.update.model_dump(),
+        "records": [r.model_dump() for r in config.records],
+    }
+    return EffectiveConfig(version=holder.version, hash=holder.content_hash, content=content)
+
+
+@router.get("/diagnostics", response_model=None)
+async def get_diagnostics(request: Request):
+    if (denied := _denied(request)) is not None:
+        return denied
+    from dyndnsarr_agent.db.diagnostics_repo import diagnostics
+
+    params = request.query_params
+    name, cursor = params.get("record"), params.get("cursor")
+    limit_text = params.get("limit", "100")
+    if (
+        not limit_text.isdigit()
+        or len(limit_text) > 3
+        or not 1 <= int(limit_text) <= 100
+        or (cursor and len(cursor) > 1024)
+    ):
+        return _error(400, "request_error", "invalid_query", "Paginación no válida")
+    names = {r.name for r in request.app.state.holder.config.records}
+    if name is not None and name not in names:
+        return _error(404, "request_error", "not_found", "Registro desconocido")
+    try:
+        return diagnostics(request.app.state.db, name, int(limit_text), cursor, record_names=names)
+    except ValueError:
+        return _error(400, "request_error", "invalid_cursor", "Cursor no válido")

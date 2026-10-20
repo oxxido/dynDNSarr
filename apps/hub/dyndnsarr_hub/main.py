@@ -12,8 +12,10 @@ from dyndnsarr_hub import __version__
 from dyndnsarr_hub.api.events import router as events_router
 from dyndnsarr_hub.api.health import router as health_router
 from dyndnsarr_hub.api.public import router as public_router
+from dyndnsarr_hub.auth.web import protect
+from dyndnsarr_hub.clock import utc_now
 from dyndnsarr_hub.config import Settings
-from dyndnsarr_hub.db import MIGRATIONS
+from dyndnsarr_hub.db import MIGRATIONS, private_repo
 from dyndnsarr_hub.db.state import record_boot
 from dyndnsarr_hub.services import status_refresher
 from dyndnsarr_shared.db import connect, migrate
@@ -31,6 +33,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         schema_version = migrate(conn, MIGRATIONS)
         instance_id, boot_count = record_boot(conn)
         app.state.db = conn
+        for agent_id, _snapshot in private_repo.enabled_snapshots(conn):
+            private_repo.mark_gap(conn, agent_id, utc_now())
         logger.info(
             "startup",
             extra={
@@ -62,10 +66,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app(settings: Settings) -> FastAPI:
-    app = FastAPI(title="DynDNSarr Hub", version=__version__, lifespan=lifespan)
+    app = FastAPI(
+        title="DynDNSarr Hub",
+        version=__version__,
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
     app.state.settings = settings
     # Transporte del cliente que consulta a los Agents: solo lo sustituyen las pruebas.
     app.state.agent_transport = None
+    app.middleware("http")(protect)
+    from dyndnsarr_hub.api.admin import router as admin_router
+
+    app.include_router(admin_router)
+    app.mount(
+        "/admin/static", StaticFiles(directory=STATIC_DIR, check_dir=False), name="admin-static"
+    )
     app.include_router(health_router)
     app.include_router(events_router)
     if settings.public_enabled:

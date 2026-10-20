@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from dyndnsarr_hub.clock import iso, parse_instant
 from dyndnsarr_hub.public.dto import State
-from dyndnsarr_hub.public.state import AgentProjection, RecordProjection
+from dyndnsarr_hub.public.state import AgentProjection, MonitoringPolicy, RecordProjection
 
 MAX_RENEWALS_PER_AGENT = 50
 SAMPLE_RETENTION = timedelta(days=30)
@@ -173,3 +173,11 @@ def samples_since(conn: sqlite3.Connection, since: datetime) -> list[tuple[datet
         (iso(since),),
     ).fetchall()
     return [(parse_instant(at), state) for at, state in rows]
+
+
+def monitoring_policy(conn: sqlite3.Connection) -> MonitoringPolicy:
+    row = conn.execute(
+        "SELECT observation_max_seconds, critical_mismatch_seconds, stale_refresh_factor, "
+        "version FROM public_monitoring_policy WHERE id = 1"
+    ).fetchone()
+    return MonitoringPolicy(*row)
