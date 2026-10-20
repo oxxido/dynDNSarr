@@ -474,6 +474,14 @@ def test_admin_pages_real_config_and_actions_are_idempotent(tmp_path):
                 response = await web.get(path)
                 assert response.status_code == 200, response.text
                 assert "canary-key" not in response.text
+            history = await web.get("/admin/history")
+            assert '<option value="" selected>Todos los Agents</option>' in history.text
+            filtered = await web.get(
+                "/admin/history",
+                params={"agent": AGENT_ID, "type": "dns_verified", "since": "2026-10-19T00:00:00Z"},
+            )
+            assert 'name="type" value="dns_verified"' in filtered.text
+            assert 'name="since" value="2026-10-19T00:00:00Z"' in filtered.text
             page = await web.get("/admin/config")
             assert 'name="active_version" value="0"' in page.text
             assert 'name="verify_retry_seconds" type="number" min="1" value="60"' in page.text
