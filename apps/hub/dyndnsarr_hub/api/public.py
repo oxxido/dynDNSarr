@@ -52,3 +52,28 @@ async def public_status(request: Request) -> JSONResponse:
     db: sqlite3.Connection = request.app.state.db
     dto = build_dto(db, utc_now(), request.app.state.settings)
     return JSONResponse(dto.model_dump(mode="json", by_alias=True), headers=PUBLIC_HEADERS)
+
+
+@router.get("/public/v1/homarr", response_model=None)
+async def homarr_status(request: Request):
+    from dyndnsarr_hub.public.homarr import build
+
+    return JSONResponse(
+        build(request.app.state.db, utc_now(), request.app.state.settings).model_dump(mode="json"),
+        headers=PUBLIC_HEADERS,
+    )
+
+
+@router.get("/public/homarr", response_model=None)
+async def homarr_widget(request: Request):
+    from dyndnsarr_hub.public.homarr import build
+
+    settings = request.app.state.settings
+    nonce = secrets.token_urlsafe(16)
+    policy = csp(nonce).replace(
+        "frame-ancestors 'none'", "frame-ancestors " + (settings.homarr_origin or "'none'")
+    )
+    html = _templates.get_template("public/homarr.j2").render(
+        v=build(request.app.state.db, utc_now(), settings), nonce=nonce
+    )
+    return HTMLResponse(html, headers={**PUBLIC_HEADERS, "Content-Security-Policy": policy})

@@ -67,7 +67,7 @@ def test_an_agent_refusal_is_reported_as_api_error(tls_agent):
         False,
         None,
         422,
-        "unsupported_command",
+        "device_not_allowed",
     )
     missing = call(tls_agent.url, tls_agent.ca_file, tls_agent.token, "command", "nope")
     assert (missing.http_status, missing.api_error) == (404, "not_found")

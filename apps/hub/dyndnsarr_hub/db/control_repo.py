@@ -38,6 +38,7 @@ class HubCommand:
     expires_at: str
     status: str
     result: dict[str, Any] | None
+    resource_id: str | None = None
 
 
 _DESIRED = "agent_id, version, content_hash, content, created_at"
@@ -45,7 +46,9 @@ _OBSERVED = (
     "agent_id, config_version, config_hash, last_result, last_code, "
     "last_attempt_version, last_attempt_at"
 )
-_COMMAND = "command_id, agent_id, type, requested_by, created_at, expires_at, status, result"
+_COMMAND = (
+    "command_id, agent_id, type, requested_by, created_at, expires_at, status, result, resource_id"
+)
 
 
 # --- configuración deseada ---
@@ -136,7 +139,7 @@ def record_config_reset(conn: sqlite3.Connection, agent_id: str, now: datetime) 
 
 
 def _command(row: tuple) -> HubCommand:
-    return HubCommand(*row[:7], json.loads(row[7]) if row[7] else None)
+    return HubCommand(*row[:7], json.loads(row[7]) if row[7] else None, row[8])
 
 
 def create_command(
@@ -147,10 +150,11 @@ def create_command(
     requested_by: str,
     now: datetime,
     expires_at: str,
+    resource_id: str | None = None,
 ) -> None:
     conn.execute(
-        f"INSERT INTO commands ({_COMMAND}) VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL)",
-        (command_id, agent_id, type, requested_by, iso(now), expires_at),
+        f"INSERT INTO commands ({_COMMAND}) VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?)",
+        (command_id, agent_id, type, requested_by, iso(now), expires_at, resource_id),
     )
 
 

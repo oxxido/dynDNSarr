@@ -4,10 +4,9 @@ from datetime import UTC, datetime
 import pytest
 
 from dyndnsarr_hub.auth.tokens import generate_token, hash_token
-from dyndnsarr_hub.db import MIGRATIONS, agents_repo, control_repo, events_repo
+from dyndnsarr_hub.db import MIGRATIONS, agents_repo, control_repo
 from dyndnsarr_shared.control import canonical_json, config_hash
 from dyndnsarr_shared.db import connect, migrate, transaction
-from dyndnsarr_shared.events import AgentEvent
 
 NOW = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
 EXPIRES = "2026-10-19T12:05:00Z"
@@ -33,19 +32,19 @@ def test_migration_0003_applies_over_a_0002_database_with_data(tmp_path):
         conn.executescript(f"BEGIN;\n{sql}\nPRAGMA user_version = {version};\nCOMMIT;")
     with transaction(conn):
         agents_repo.create_agent(conn, "raspberry-home", hash_token("dda_x"), NOW)
-        events_repo.insert_events(
-            conn,
-            [
-                AgentEvent(
-                    event_id=str(uuid.uuid4()),
-                    agent_id="raspberry-home",
-                    sequence=1,
-                    type="ip_changed",
-                    occurred_at="2026-10-19T11:00:00Z",
-                    payload={},
-                )
-            ],
-            NOW,
+        # Datos del esquema anterior, sin usar repositorios del esquema nuevo.
+        conn.execute(
+            "INSERT INTO events VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "raspberry-home",
+                str(uuid.uuid4()),
+                1,
+                "ip_changed",
+                "2026-10-19T11:00:00Z",
+                "2026-10-19T12:00:00Z",
+                "home.example.com",
+                "{}",
+            ),
         )
     assert migrate(conn, MIGRATIONS) == len(scripts)
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}

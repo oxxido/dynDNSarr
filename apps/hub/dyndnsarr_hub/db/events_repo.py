@@ -29,6 +29,12 @@ def insert_events(
     """
     new = []
     for e in events:
+        receipt = conn.execute(
+            "INSERT OR IGNORE INTO event_receipts VALUES (?,?,?)",
+            (e.agent_id, e.event_id, iso(received_at)),
+        )
+        if receipt.rowcount == 0:
+            continue
         cursor = conn.execute(
             "INSERT OR IGNORE INTO events "
             "(agent_id, event_id, sequence, type, occurred_at, received_at, record_name, payload) "

@@ -20,6 +20,7 @@ from dyndnsarr_shared.control import (
     EffectiveConfig,
 )
 from dyndnsarr_shared.events import ErrorResponse
+from dyndnsarr_shared.integrations import IntegrationSnapshot
 from dyndnsarr_shared.tls import build_ssl_context, has_tls_error
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,8 @@ _SAFE_CODES = frozenset(
         "no_managed_records",
         "invalid_query",
         "invalid_cursor",
+        "device_not_allowed",
+        "cooldown",
     }
 )
 
@@ -134,6 +137,9 @@ class AgentClient:
 
     async def config(self) -> Reply[EffectiveConfig]:
         return await self._call("GET", "/config", EffectiveConfig)
+
+    async def integrations(self) -> Reply[IntegrationSnapshot]:
+        return await self._call("GET", "/integrations", IntegrationSnapshot)
 
     async def diagnostics(self, cursor: str | None = None) -> Reply[DiagnosticPage]:
         from urllib.parse import urlencode

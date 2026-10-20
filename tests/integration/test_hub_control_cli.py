@@ -152,9 +152,9 @@ def test_command_prints_the_id_and_command_show_follows_it_to_the_end(env, capsy
     assert "-> succeeded" in out
 
 
-def test_an_unsupported_command_is_marked_failed_with_the_agents_code(env, capsys):
+def test_a_disallowed_device_is_marked_failed_with_the_agents_code(env, capsys):
     code, out, _ = run(capsys, "command", AGENT, "wake_device")
-    assert code == 1 and "-> failed" in out and "unsupported_command" in out
+    assert code == 1 and "-> failed" in out and "device_not_allowed" in out
 
 
 def test_with_the_agent_down_the_command_stays_pending(env, tls_agent, capsys):
