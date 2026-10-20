@@ -135,3 +135,15 @@ Detalle: [slices/05-hub-privado-diagnosticos.md](slices/05-hub-privado-diagnosti
   allowlist para redes locales. Clientes de integración con `trust_env=False` y TLS verificado.
 - Inventario y alertas solo bajo `/admin`; exportación JSON de metadatos permitidos. Homarr solo
   proyección pública, no datos de integración ni sesiones, y se apaga con la landing.
+
+## Fijado en slice7
+
+- API de servicios y MCP comparten catálogo Pydantic (`service_models`) y autorización
+  (`service_api`); las identidades `dds_` son distintas de sesiones y tokens Agent–Hub.
+- Cada herramienta vuelve a comprobar permisos exactos; cambios ligados a UUID, actor,
+  contenido y revisión. Sin destinos/URLs libres ni concesión de permisos desde herramientas.
+- MCP stdio con SDK oficial consume la API HTTPS; stdout solo contiene protocolo.
+- Caddy solo modifica el bloque reservado con ETag/If-Match; red fuera de transacciones,
+  intenciones/revisiones persistentes y reconciliación independiente. ADR-0012.
+- `resource_id` de `check_dns`/`sync_ddns` es el nombre exacto del registro; se valida al
+  recibir y ejecutar, y un `monitored` nunca entra en la actualización.

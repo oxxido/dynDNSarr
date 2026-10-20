@@ -1,0 +1,12 @@
+# Permisos exactos; guardar localmente y emitir con client-add. Sin tokens en este archivo.
+# Empezar con lectura; añadir operaciones solo al delegarlas deliberadamente.
+actions = ["get_status", "list_domains", "dns_history", "list_devices", "list_publications",
+           "publication_history", "get_operation"]
+agents = ["raspberry-home"]
+domains = ["home.example.net", "app.example.net"]
+devices = ["nas"]
+destinations = ["app"]
+ports = [8080]
+# Operaciones disponibles: check_dns, sync_ddns, wake_device, verify_publication,
+# publish, disable_publication, delete_publication, rollback_publication.
+# No existen comodines, permisos implícitos ni una herramienta para ampliar permisos.

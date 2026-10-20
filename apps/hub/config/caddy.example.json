@@ -1,0 +1,17 @@
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "gateway": {
+          "listen": [":443"],
+          "routes": [
+            {
+              "@id": "dyndnsarr",
+              "handle": [{"handler": "subroute", "routes": []}]
+            }
+          ]
+        }
+      }
+    }
+  }
+}

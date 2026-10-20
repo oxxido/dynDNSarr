@@ -1,6 +1,6 @@
 # Slice 6 — Integraciones y release v1.0
 
-- **Estado:** en revisión
+- **Estado:** fusionado
 - **Fase (arquitectura):** 5 (§10, §11, §12 y §13 casos 8, 10–12, 14)
 - **Rama:** `slice/06-integraciones-release`
 - **PR:** [#9](https://github.com/oxxido/dynDNSarr/pull/9)
@@ -122,3 +122,5 @@ La publicación del release y pruebas de hardware quedan para después del merge
 sin merge. Suite completa final Python 3.11/3.12, wheels e imagen Docker: evidencia viva en
 [los checks del PR](https://github.com/oxxido/dynDNSarr/pull/9/checks). La publicación de tag/release
 sigue pendiente del merge y decisión del mantenedor; no equivale a este PR abierto.
+
+- Merge del PR #9 verificado el 2026-10-20: `11e614888975ac3ad55180eed9ea3159aaa42d7d`.

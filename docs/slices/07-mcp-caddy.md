@@ -93,4 +93,13 @@ API; recargar un Caddyfile estático puede perderlos. Actualizar Agent para DNS 
 - Base `main` actualizada con `origin/main`; PR #9 fusionado el 2026-10-20,
   commit `11e614888975ac3ad55180eed9ea3159aaa42d7d`.
 - Referencias oficiales consultadas: [SDK MCP](https://github.com/modelcontextprotocol/python-sdk/tree/v1.x),
-  [API Caddy](https://caddyserver.com/docs/api). Evidencia final pendiente.
+  [API Caddy](https://caddyserver.com/docs/api).
+- Implementación: comandos por registro (`d04174b`), API/MCP/gateway y pruebas (`520ebc5`).
+- Validación dirigida: 65 pruebas de servicios, SDK MCP, Agent y política; otras 49 de
+  auditoría/eventos/control CLI y 44 tras comprobar IDs Pi-hole (sin sumar ejecuciones solapadas).
+- `scripts/verify-wheels.sh`: instalación limpia, healthchecks Agent/Hub, vistas privadas/públicas,
+  API scoped, migración 0008 y CLI MCP correctos. `ruff check`, formato y `git diff --check` correctos.
+- Suite completa local: **924 passed** (284,92 s), incluyendo e2e con procesos reales.
+- Validación posterior del MCP operativo: **25 passed**, con cliente SDK stdio → Hub TLS →
+  Agent TLS real; `check_dns` dirigido y repetición del UUID crean un único comando.
+- Verificación final tras los últimos ajustes y PR pendientes.

@@ -663,3 +663,178 @@ su retención existente: los eventos, incluidos pendientes del outbox, expiran s
 
 Estas pruebas con hardware, credenciales y configuración del servidor las realiza su administrador.
 La validación automática usa servicios falsos/TLS local y no envía WoL o avisos a destinos reales.
+
+## 11. API de servicios, MCP y Caddy (slice7)
+
+### 11.1 Actualizar y habilitar la API
+
+Actualizar Agent, shared y Hub a 1.1.0. Hacer primero backup coherente de SQLite (§4):
+la migración Hub 0008 añade identidades, intenciones, publicaciones, revisiones y sondeos.
+Un Agent anterior rechaza `resource_id` DNS; nunca se degrada la petición a un comando global.
+La consola/UI v1.0 mantiene comandos de Agent completo si no especifica un registro.
+
+`DYNDNSARR_HUB_SERVICES_ENABLED=true` habilita `/service/v1`; false (default) responde 404.
+Publicar esta ruta solo por HTTPS en el proxy privado ya gestionado. No usar la ruta pública
+restringida de §8.3 para ello, ni exponer el Agent. El Hub sigue detrás del proxy, sin TLS propio.
+La API usa Bearer de cliente, no cookie web ni token `dda_`/`ddh_`; rechaza peticiones con Origin.
+Esto permite integraciones de servicio, no llamadas desde JavaScript de un sitio web.
+
+Copiar y adaptar `apps/hub/config/service-client.example.toml`. Acciones, Agents, dominios,
+dispositivos, destinos y puertos son listas exactas; las listas vacías no conceden acceso.
+Cada acción necesita estar enumerada: `read`/`operate`/`publish` son categorías del catálogo,
+no scopes que puedan expandirse. Los permisos no se pueden cambiar mediante la API.
+
+```sh
+# En Docker, copiar primero el archivo de permisos al volumen /data.
+docker compose exec hub dyndnsarr-hub client-add assistant /data/service-client.toml
+docker compose exec hub dyndnsarr-hub client-list
+# Revocar inmediatamente todas las solicitudes posteriores de esta identidad:
+docker compose exec hub dyndnsarr-hub client-revoke assistant
+```
+
+Guardar el token `dds_` mostrado una sola vez en el entorno secreto del cliente. SQLite
+solo conserva su hash. Para rotar o cambiar permisos, crear otra identidad, actualizar el
+cliente y revocar la anterior. No se reutiliza un ID revocado. La revocación no elimina
+publicaciones ni cancela intenciones ya aceptadas; retirarlas explícitamente si corresponde.
+Revisiones/intenciones se conservan para rollback/deduplicación; incluirlas en el backup y
+vigilar el tamaño. La auditoría sigue la retención general del Hub.
+
+### 11.2 Consumir por API o MCP
+
+`GET /service/v1/tools` devuelve solo herramientas concedidas, con su JSON Schema.
+`POST /service/v1/tools/{nombre}` recibe JSON estricto, máximo 16 KiB. `401` significa
+credencial inválida/revocada, `403` permiso insuficiente, `409` conflicto/política y `400`
+entrada inválida. Los errores contienen solo `code`, sin respuestas de proveedores.
+Las consultas también usan POST para mantener un catálogo idéntico en MCP.
+
+Consultas: `get_status`, `list_domains` (`agent_id`), `dns_history` (`agent_id`, `domain`,
+`limit` 1–100 y `cursor` opcional), `list_devices` (`agent_id`), `list_publications` (`{}`),
+`publication_history` (`publication_id`, últimas 100 revisiones) y `get_operation` (`operation_id`).
+El historial se filtra por Agent/dominio antes de paginar. Estado e inventario provienen de
+caché con fecha y `stale`; no disparan red. Las publicaciones muestran configuración y
+sondeo del upstream por separado. La accesibilidad comienza como `unknown`.
+
+Operaciones DNS: `check_dns`/`sync_ddns` con `agent_id`, `domain` exacto y `operation_id` UUID.
+El Agent valida de nuevo al recibir/ejecutar; `sync_ddns` rechaza `monitored`. `wake_device`
+usa `agent_id`, `device_id`, UUID y política WoL local, inventario reciente y cooldown.
+Un comando aceptado no significa terminado: consultar `get_operation`; el outbox actualiza
+el resultado. Si el envío queda ambiguo, repetir la misma petición/UUID conserva command_id.
+No crear otro UUID para resolver un timeout. Un UUID con otro cliente/acción/contenido da 409.
+
+MCP: instalar el wheel Hub (incluye SDK oficial `mcp>=1.28,<2`) en el entorno del cliente.
+Configurar un servidor **stdio** cuyo comando sea la ruta absoluta a `dyndnsarr-mcp`, sin
+argumentos. Pasar por el mecanismo de secretos del cliente:
+
+```text
+DYNDNSARR_HUB_MCP_HUB_URL=https://dyndnsarr-api.example.net
+DYNDNSARR_HUB_MCP_TOKEN=<token emitido por client-add>
+DYNDNSARR_HUB_MCP_CA_FILE=<CA local si no se usa un certificado público>
+```
+
+`MCP_CA_FILE` es opcional; sin ella se usa el trust store del sistema. HTTP solo se acepta
+en loopback para pruebas locales. El proceso MCP no necesita directorio de datos, acceso a
+SQLite ni credenciales del Agent. stdout está reservado al protocolo; errores seguros a stderr.
+No se publica un endpoint `/mcp` HTTP, no hay flujo OAuth ni SSE propio. Los clientes que
+aceptan servidores stdio usan inicialización/listado/llamada estándar del SDK MCP.
+
+### 11.3 Aprovisionar Caddy manualmente
+
+Esto es una guía para el operador: la aplicación no instala Caddy, abre puertos ni cambia
+su configuración global. No aplicar el ejemplo completo encima de una instalación existente.
+Integrar el bloque reservado de `apps/hub/config/caddy.example.json` en un servidor Caddy
+existente llamado `gateway`, con `listen=[":443"]` y HTTPS automático habilitado:
+
+```json
+{"@id":"dyndnsarr","handle":[{"handler":"subroute","routes":[]}]}
+```
+
+El bloque no puede tener matchers, `terminal` ni manejadores adicionales. Debe ser alcanzable
+antes de rutas catch-all; las rutas avanzadas/regex no se gestionan desde DynDNSarr.
+No editar manualmente su contenido: el reconciliador lo repone según SQLite. Las demás rutas
+se conservan. No compartir un dominio/wildcard en otros bloques/servidores. Se rechazan esos
+conflictos; un ETag cambiado devuelve una intención pendiente y se vuelve a leer.
+
+Mantener el admin API de Caddy aislado. Para acceder desde el contenedor Hub, usar un proxy
+**HTTPS privado autenticado** delante de ese admin API, con controles de red. El Bearer
+`DYNDNSARR_HUB_GATEWAY_TOKEN` lo debe verificar ese proxy: Caddy admin nativo no lo verifica.
+Copiar su CA al volumen del Hub y fijar `DYNDNSARR_HUB_GATEWAY_CA_FILE`; sin ella, trust store
+del sistema. HTTP solo en loopback (que en Docker es el propio contenedor). No exponer 2019
+a Internet ni publicar un proxy admin sin autenticación. Limitar las credenciales a las rutas
+necesarias: lectura `/config/apps/http/servers`, PATCH de las rutas del servidor autorizado.
+
+Adaptar `apps/hub/config/gateway.example.toml`, copiarlo al volumen y fijar
+`DYNDNSARR_HUB_GATEWAY_FILE=/data/gateway.toml`. Sin archivo, gateway desactivado. Archivo
+inválido impide arrancar, para no operar con una política supuesta. Reiniciar el Hub tras
+cambiar política. `admin_networks` autoriza las IP del admin API; se resuelven y fijan antes
+de conectar conservando Host/SNI. Los destinos publicados son IPv4 literales por ID con
+puertos enumerados. Siempre se bloquean metadatos/link-local/multicast/unspecified; no se
+aceptan URLs, DNS, rutas, credenciales o dial arbitrario desde una herramienta.
+
+Para upstream HTTPS, el certificado debe ser verificable por Caddy y tener SAN de la IP;
+no hay opción insecure. Caddy gestiona certificados públicos y redirección HTTP→HTTPS:
+el DNS y los puertos necesarios deben estar preparados por el operador. DynDNSarr no crea
+ni modifica registros DNS al publicar. Usar `caddy run --resume` con almacenamiento persistente
+según el despliegue existente; recargar un Caddyfile antiguo puede reemplazar cambios API.
+El reconciliador repone su bloque, pero no restaura el resto de una configuración perdida.
+
+### 11.4 Publicaciones, caducidad y recuperación
+
+Conceder `publish` y los dominios/destinos/puertos concretos en el cliente. Ejemplo del cuerpo
+para `publish` (UUID nuevo únicamente para una intención nueva):
+
+```json
+{
+  "operation_id": "3a0d470c-c920-4721-bd16-8072072c7f2f",
+  "publication_id": "app",
+  "expected_revision": 0,
+  "name": "Aplicación de desarrollo",
+  "domain": "app.example.net",
+  "destination": "app",
+  "port": 8080,
+  "access": "public",
+  "enabled": true,
+  "expires_at": "2027-01-01T18:00:00Z"
+}
+```
+
+Crear usa revisión 0; para modificar, usar la revisión actual. La revisión aumenta al aplicar,
+deshabilitar, retirar, expirar o hacer rollback. `expires_at` es opcional, UTC canónica futura;
+null permite duración indefinida. `access=private` exige `private_networks`: Caddy permite
+solo IPs de conexión dentro de esos CIDR y responde 403 al resto. No es login de usuario.
+Si hay otro reverse proxy delante, Caddy verá la IP de ese proxy: no usar esta modalidad
+como restricción por visitante sin conexión directa. No se confía en X-Forwarded-For.
+
+`disable_publication`/`delete_publication` reciben publication_id, expected_revision y UUID.
+`rollback_publication` añade `revision`: recupera esa revisión solo si sigue permitida y no
+ha caducado. El historial conserva configuraciones propias, no secretos ni snapshots completos
+de Caddy. La API del proxy valida/aplica cada cambio atómicamente; un rechazo definitivo
+conserva la versión previa. Las intenciones ambiguas quedan `pending` hasta comprobar Caddy.
+Consultar/repetir el mismo UUID; otro contenido con él no se acepta. No confundir `configured`
+con accesibilidad: `verify_publication` sondea únicamente el upstream, sin redirects, y guarda
+la fecha/resultado; el HTTPS público queda explícitamente `unknown` hasta la prueba manual.
+Cambiar una publicación invalida su sondeo anterior.
+
+Cada 15 s y al arrancar, el Hub reconcilia su bloque: no reactiva publicaciones caducadas,
+deshabilita destinos retirados de la política y repara deriva. Mantiene conexión/tarea propias,
+sin bloquear DDNS. **La retirada puede retrasarse mientras Hub o Caddy estén apagados**;
+una caducidad de aplicación no sustituye una barrera de seguridad temporal externa.
+
+### 11.5 Comprobación manual en la instalación
+
+Tras backup y actualización, con recursos de prueba autorizados:
+
+1. Conectar un cliente MCP de lectura: listar solo sus herramientas/recursos; intentar una
+   operación y un Agent ajeno debe dar rechazo. Revocar token y comprobar rechazo en la sesión abierta.
+2. Delegar un registro managed de prueba y comprobar que `sync_ddns` solo lo toca a él;
+   repetir UUID y comprobar un solo comando. Un monitored no admite escritura.
+3. Aprovisionar un bloque Caddy vacío sin modificar rutas existentes. Publicar un dominio/destino
+   permitidos; comprobar HTTPS/certificado desde fuera y conservación de los otros sitios.
+4. Probar dominio/destino/puerto no permitidos, conflicto y edición obsoleta: no deben reemplazar
+   publicaciones. Cambiar destino válido y hacer rollback; verificar el destino anterior.
+5. Publicar con caducidad cercana, detener/rearrancar Hub y comprobar retirada. Simular Caddy
+   inaccesible, volverlo a habilitar y comprobar reconciliación sin publicaciones duplicadas.
+6. Probar `access=private` desde un CIDR permitido y desde fuera; revisar auditoría privada
+   y confirmar que landing/Homarr no muestran servicios, destinos, credenciales ni dispositivos.
+
+Las pruebas automatizadas usan Caddy simulado y MCP/Hub TLS reales; las comprobaciones de
+Caddy/ACME y destinos de producción requieren esta validación manual del operador.

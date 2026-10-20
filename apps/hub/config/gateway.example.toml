@@ -1,0 +1,16 @@
+# Política local, solo el operador la modifica; no accesible desde MCP ni la API.
+# HTTPS hacia un proxy privado del admin API Caddy. HTTP solo en loopback.
+admin_url = "https://caddy-admin.example.net"
+admin_networks = ["192.168.1.0/24"]
+server = "gateway"
+domains = ["app.example.net"]
+# access=private limita por IP de conexión a Caddy, sin fiarse de X-Forwarded-For.
+# Si otro proxy está delante, esta política no distingue sus visitantes: ver operaciones §11.
+private_networks = ["192.168.1.0/24"]
+
+[destinations.app]
+# IPv4 literal, sin resoluciones DNS, rutas, redirecciones o credenciales.
+host = "192.168.1.20"
+ports = [8080]
+scheme = "http"
+# scheme=https usa verificación TLS de Caddy (certificado con SAN de esta IP); nunca insecure.
