@@ -129,32 +129,34 @@ async def run_forever(
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> None:
     """Refresca cada `refresh_seconds`. Un error inesperado no mata la tarea; los fallos de un
-    agente se registran al empezar y al terminar la racha, solo con códigos seguros."""
-    http: httpx.AsyncClient | None = None
+    agente se registran al empezar y al terminar la racha, solo con códigos seguros.
+
+    El cliente se construye en cada pasada: así recoge las CA de los Agents recién emparejados
+    (ADR-0013) y una CA global que aparezca más tarde."""
     failing: set[str] = set()
-    try:
-        while True:
+    while True:
+        try:
+            http: httpx.AsyncClient | None = None
             try:
-                if http is None:
-                    try:
-                        http = build_http_client(ca_file, transport)
-                    except (OSError, ssl.SSLError):
-                        # La CA aún no está (o es ilegible): se reintenta en la próxima pasada.
-                        http = None
+                http = build_http_client(ca_file, transport, agents_repo.pinned_cas(conn))
+            except (OSError, ssl.SSLError):
+                # La CA aún no está (o es ilegible): se reintenta en la próxima pasada.
+                http = None
+            try:
                 outcome = await refresh_once(conn, http, refresh_seconds, clock)
-                for agent_id, code in outcome.items():
-                    if code is not None and agent_id not in failing:
-                        failing.add(agent_id)
-                        logger.warning(
-                            "status_refresh_failed", extra={"agent_id": agent_id, "code": code}
-                        )
-                    elif code is None and agent_id in failing:
-                        failing.discard(agent_id)
-                        logger.info("status_refresh_recovered", extra={"agent_id": agent_id})
-            except Exception as exc:
-                # Solo el tipo: el texto de una excepción podría llevar URLs o datos.
-                logger.error("status_refresh_error", extra={"error_type": type(exc).__name__})
-            await sleep(refresh_seconds)
-    finally:
-        if http is not None:
-            await http.aclose()
+            finally:
+                if http is not None:
+                    await http.aclose()
+            for agent_id, code in outcome.items():
+                if code is not None and agent_id not in failing:
+                    failing.add(agent_id)
+                    logger.warning(
+                        "status_refresh_failed", extra={"agent_id": agent_id, "code": code}
+                    )
+                elif code is None and agent_id in failing:
+                    failing.discard(agent_id)
+                    logger.info("status_refresh_recovered", extra={"agent_id": agent_id})
+        except Exception as exc:
+            # Solo el tipo: el texto de una excepción podría llevar URLs o datos.
+            logger.error("status_refresh_error", extra={"error_type": type(exc).__name__})
+        await sleep(refresh_seconds)

@@ -1,6 +1,6 @@
 # Slice 7 — API de servicios, MCP y Caddy (v1.1)
 
-- **Estado:** en revisión
+- **Estado:** fusionado
 - **Fase (arquitectura):** 6
 - **Rama:** `slice/07-mcp-caddy`
 - **PR:** [#10](https://github.com/oxxido/dynDNSarr/pull/10)
@@ -119,3 +119,4 @@ API; recargar un Caddyfile estático puede perderlos. Actualizar Agent para DNS 
   el reloj de ese test (seed y endpoint) para comparar los mismos datos. Sin cambio de producto.
 - Tras fijar el reloj: **43 passed** en `test_hub_public_api.py` (5,69 s); lint y formato
   correctos. La corrección se entrega en un commit separado; CI completa vuelve a ejecutarse.
+- Fusionado: PR #10, merge `d1e0b39`, verificado con `gh pr view 10` el 2026-10-22.

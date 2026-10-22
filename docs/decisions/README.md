@@ -16,3 +16,4 @@ Una decisión que debe sobrevivir a un slice se registra aquí: `NNNN-titulo-cor
 | [0010](0010-monitorizacion-privada.md) | Diagnóstico privado, política común de estados y uptime por duración observada |
 | [0011](0011-integraciones-v1.md) | Pi-hole v6, WoL por política, alertas persistentes, Homarr y retención/exportación |
 | [0012](0012-servicios-mcp-caddy.md) | API scoped, MCP stdio, comandos DNS por registro y publicaciones Caddy con revisiones/expiración |
+| [0013](0013-instalacion-emparejamiento.md) | Instalación asistida, emparejamiento Agent ↔ Hub por código, puerto de enlace HTTPS y setup web del administrador |

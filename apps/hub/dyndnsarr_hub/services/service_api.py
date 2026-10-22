@@ -5,7 +5,14 @@ from datetime import timedelta
 from hashlib import sha256
 
 from dyndnsarr_hub.clock import iso, parse_instant, utc_now
-from dyndnsarr_hub.db import admin_repo, auth_repo, control_repo, private_repo, services_repo
+from dyndnsarr_hub.db import (
+    admin_repo,
+    agents_repo,
+    auth_repo,
+    control_repo,
+    private_repo,
+    services_repo,
+)
 from dyndnsarr_hub.services import admin_actions, control, gateway
 from dyndnsarr_hub.services.agent_client import AgentClient, build_http_client
 from dyndnsarr_hub.services.caddy import validate_publication
@@ -245,7 +252,8 @@ async def command(conn, client_id, grants, action, data, settings, transport, no
             resource_id=stored.resource_id,
             expires_at=stored.expires_at,
         )
-        async with build_http_client(settings.agent_ca_file, transport) as http:
+        pinned = agents_repo.pinned_cas(conn)
+        async with build_http_client(settings.agent_ca_file, transport, pinned) as http:
             await control.send_command(conn, AgentClient(http, url, token), request, data.agent_id)
         stored = control_repo.get_command(conn, stored.command_id)
         if stored.status in ("pending", "sent"):
