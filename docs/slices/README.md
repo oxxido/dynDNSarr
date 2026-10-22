@@ -24,7 +24,7 @@ Un slice es la unidad de trabajo: una rama y un PR. El orden y el alcance genera
 | 5 | 4 | Hub privado y diagnósticos ([plan](05-hub-privado-diagnosticos.md)) | fusionado | `slice/05-hub-privado-diagnosticos` | #7 |
 | 6 | 5 | Integraciones y release v1.0 ([plan](06-integraciones-release.md)) | fusionado | `slice/06-integraciones-release` | #9 |
 | 7 | 6 | API de servicios, MCP y Caddy ([plan](07-mcp-caddy.md)) | fusionado | `slice/07-mcp-caddy` | #10 |
-| 8 | 7 | Instalación asistida y emparejamiento ([plan](08-instalacion-emparejamiento.md)) | planificado | `slice/08-instalacion-emparejamiento` | — |
+| 8 | 7 | Instalación asistida y emparejamiento ([plan](08-instalacion-emparejamiento.md)) | en revisión | `slice/08-instalacion-emparejamiento` | — |
 | 9 | 8 | Caddy vía Agent (modo Caddyfile) | pendiente | — | — |
 | 10 | 9 | UI de publicaciones | pendiente | — | — |
 

@@ -1,7 +1,7 @@
 # Slice 8 — Instalación asistida y emparejamiento Agent ↔ Hub
 
-- **Estado:** planificado
-- **Fase (arquitectura):** 7 (nueva; se añade a architecture §12 en este slice)
+- **Estado:** en revisión
+- **Fase (arquitectura):** 7 (añadida a architecture §12 en este slice)
 - **Rama:** `slice/08-instalacion-emparejamiento`
 - **PR:** —
 
@@ -157,4 +157,50 @@ convenciones (fijado en slice8); operaciones §12 (instalación asistida) y refe
 
 ## Evidencia
 
-Se rellena al implementar.
+Implementado en `slice/08-instalacion-emparejamiento` (2026-10-22). Decisiones en
+[ADR-0013](../decisions/0013-instalacion-emparejamiento.md); guía en operaciones §12.
+
+Ajustes durante la implementación (sin cambiar las decisiones D1–D6):
+
+- El outbox del Agent ya no reutiliza conexiones: una conexión TLS ociosa contra el puerto de
+  enlace retrasaba 30 s el cierre del Hub (lo detectó el e2e con SIGTERM). Es lo mismo que ya hacía
+  `build_http_client` en el sentido Hub → Agent.
+- Sin el archivo de la CA global (`AGENT_CA_FILE`, por defecto `/data/agent-ca.pem` en Compose),
+  los Agents emparejados siguen funcionando y los no emparejados fallan cerrados (`tls_error`).
+- El instalador acepta `agent.env`/`agent.toml` en la raíz del clon (ignorados por Git); sin ellos
+  conserva la configuración instalada. `HOST` debe ser concreto (no `0.0.0.0`).
+- `agent_id` ya registrado da `agent_exists` también si lo registró un emparejamiento anterior:
+  volver a emparejar el mismo `agent_id` en el mismo Hub exige otro `agent_id` (limitación anotada
+  en ADR-0013).
+
+Validación local:
+
+| Comprobación | Resultado |
+|---|---|
+| `ruff check .` · `ruff format --check .` | correctos |
+| `pytest` (todo, incluidos e2e) | 971 pruebas correctas (899 antes del slice) |
+| `scripts/verify-wheels.sh` | correcto |
+| `scripts/verify-compose.sh` | correcto: `compose.yaml` sin editar desde otro directorio con `DYNDNSARR_SRC`, Hub `healthy`, puerto de enlace HTTPS verificable con la CA del desafío, `admin_setup_available` en el log |
+| `scripts/verify-agent-install.sh` | correcto en `debian:bookworm`: tres ejecuciones sin cambios en tokens/CA/certificado, permisos, `/healthz` HTTPS con la CA generada, ciclo DDNS sin Hub, `pair-status` con `connect_error` y sin secretos en el log |
+
+Criterios:
+
+1. Instalador en Debian 12 limpia: `verify-agent-install.sh` (sin systemd en el contenedor; la
+   unidad y el arranque por systemd quedan para la prueba manual en la Raspberry).
+2. Idempotencia: misma verificación (tres ejecuciones, con y sin archivos).
+3. Compose sin editar con `DYNDNSARR_SRC`: `verify-compose.sh`. Dockge real: prueba manual.
+4. Cualquier orden de arranque: `tests/e2e/test_pairing.py` (procesos reales; `agent-list`,
+   eventos por el puerto de enlace y `agent-status` con la CA fijada).
+5. Hub impostor o código distinto: `test_agent_pairing.py` (MAC falso y CA reenviada con TLS
+   real: el impostor no recibe el canje; `hub_mac_mismatch`/`tls_error` en `pair-status` y log).
+6. Código consumido e idempotencia: `test_hub_pairing.py`.
+7. Código débil: `test_hub_pairing.py` y `test_agent_pairing.py` (procesos que no arrancan y
+   nombran la variable).
+8. Setup del administrador: `test_hub_admin_setup.py` (uno por arranque, un solo uso, caducidad,
+   CSRF/origen, bloqueo global, 404 con administrador).
+9. Camino manual: la suite existente sigue verde.
+10. Sin secretos: comprobado en logs y consola de las pruebas del Hub, del Agent, del e2e y del
+    contenedor del instalador.
+
+Pendiente del operador (requiere `sudo` y la infraestructura real): instalar en la Raspberry con
+systemd, pegar el `compose.yaml` en Dockge y emparejar con un código real (operaciones §12).
