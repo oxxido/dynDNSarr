@@ -3,7 +3,7 @@
 - **Estado:** en revisión
 - **Fase (arquitectura):** 7 (añadida a architecture §12 en este slice)
 - **Rama:** `slice/08-instalacion-emparejamiento`
-- **PR:** —
+- **PR:** [#11](https://github.com/oxxido/dynDNSarr/pull/11)
 
 ## Objetivo
 
