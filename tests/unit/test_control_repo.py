@@ -24,7 +24,7 @@ def test_migration_0005_applies_over_a_0004_database_with_data(tmp_path):
         old.executescript(f"BEGIN;\n{sql}\nPRAGMA user_version = {version};\nCOMMIT;")
     ddns_repo.insert_event(old, "agent_started", NOW, None, {"version": "x"})
     ddns_repo.set_state(old, "public_ip", "1.2.3.4", NOW)
-    assert migrate(old, MIGRATIONS) == 6
+    assert migrate(old, MIGRATIONS) == 7
     tables = {r[0] for r in old.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"configuration_versions", "commands"} <= tables
     assert ddns_repo.get_state(old, "public_ip") == "1.2.3.4"

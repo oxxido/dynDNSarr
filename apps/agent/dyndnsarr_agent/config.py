@@ -1,8 +1,10 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from dyndnsarr_shared.pairing import normalize_code
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
@@ -27,13 +29,30 @@ class Settings(BaseSettings):
     api_token: SecretStr | None = None
     tls_cert_file: Path | None = None
     tls_key_file: Path | None = None
+    # CA pública que firmó el certificado de la API: se entrega al Hub al emparejar (ADR-0013).
+    tls_ca_file: Path | None = None
+    # Código de emparejamiento de un solo uso (≥128 bits en hex), el mismo que en el Hub.
+    pairing_code: SecretStr | None = None
     integrations_file: Path | None = None
     pihole_password: SecretStr | None = None
+
+    @field_validator("pairing_code", mode="before")
+    @classmethod
+    def _check_pairing_code(cls, value):
+        if value in (None, ""):
+            return None
+        if isinstance(value, SecretStr):
+            value = value.get_secret_value()
+        return SecretStr(normalize_code(value))
 
     @model_validator(mode="after")
     def _check_control_api(self) -> "Settings":
         prefix = self.model_config["env_prefix"]
-        files = {"TLS_CERT_FILE": self.tls_cert_file, "TLS_KEY_FILE": self.tls_key_file}
+        files = {
+            "TLS_CERT_FILE": self.tls_cert_file,
+            "TLS_KEY_FILE": self.tls_key_file,
+            "TLS_CA_FILE": self.tls_ca_file,
+        }
         if (self.tls_cert_file is None) != (self.tls_key_file is None):
             raise ValueError(f"{prefix}TLS_CERT_FILE y {prefix}TLS_KEY_FILE van juntos")
         for name, path in files.items():
@@ -53,6 +72,12 @@ class Settings(BaseSettings):
     @property
     def tls_enabled(self) -> bool:
         return self.tls_cert_file is not None
+
+    @property
+    def api_url(self) -> str:
+        """URL con la que el Hub llamará a la API: `HOST` debe estar en el certificado."""
+        host = f"[{self.host}]" if ":" in self.host else self.host
+        return f"https://{host}:{self.port}"
 
     @property
     def lock_path(self) -> Path:
