@@ -6,7 +6,7 @@ Fuente de verdad: [docs/architecture.md](docs/architecture.md) §12 (fases y cri
 
 ## Slices
 
-Los slices se numeran `slice1`, `slice2`… y corresponden 1:1 a las fases de la arquitectura (slice N = Fase N-1). Un slice puede subdividirse si resulta demasiado grande; en ese caso se anota aquí (slice2 → 2a y 2b, ambos Fase 1; slice3 → 3a y 3b, ambos Fase 2; la numeración de los siguientes no cambia).
+Los slices se numeran `slice1`, `slice2`… y corresponden 1:1 a las fases de la arquitectura (slice N = Fase N-1). Las fases 7–9 (slices 8–10, posteriores a v1.1) se acordaron con el usuario el 2026-10-22 y se añaden a architecture §12 en slice8. Un slice puede subdividirse si resulta demasiado grande; en ese caso se anota aquí (slice2 → 2a y 2b, ambos Fase 1; slice3 → 3a y 3b, ambos Fase 2; la numeración de los siguientes no cambia).
 
 | Slice | Fase | Objetivo | Criterio de aceptación (resumen) |
 |---|---|---|---|
@@ -19,6 +19,9 @@ Los slices se numeran `slice1`, `slice2`… y corresponden 1:1 a las fases de la
 | slice5 | 4 | Hub privado y diagnósticos (login, dashboard, historial, uptime) | Operaciones privadas inaccesibles sin login; `monitored` nunca se escribe |
 | slice6 | 5 | Integraciones y release v1.0 (Pi-hole, WoL, alertas, Homarr, retención/exportación, docs de instalación) | Integraciones caídas no bloquean DDNS; instalación limpia reproducible |
 | slice7 | 6 | v1.1: API scoped, MCP stdio y publicaciones Caddy | Permisos revocables, DNS por registro, publicaciones validadas, rollback y caducidad; [slice](docs/slices/07-mcp-caddy.md) |
+| slice8 | 7 | Instalación asistida: instalador del Agent, emparejamiento por código, TLS propio del Hub, setup web del admin | Clonar + `.env` + un comando por máquina; mismo código en ambos lados enlaza sin pasos manuales; [slice](docs/slices/08-instalacion-emparejamiento.md) |
+| slice9 | 8 | Caddy vía Agent: el Agent de la Raspberry de Caddy escribe un fragmento importado por el Caddyfile y recarga por `localhost:2019`; gateway guiado; autopublicación de landing y admin | Recargar el Caddyfile no pierde publicaciones; admin API nunca fuera de la Raspberry |
+| slice10 | 9 | UI de publicaciones en el admin web | Crear, editar, retirar y revertir publicaciones con CSRF y auditoría |
 
 Estado de cada slice: [docs/slices/README.md](docs/slices/README.md).
 
