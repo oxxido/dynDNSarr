@@ -10,3 +10,7 @@ dist/
 *.db-shm
 .env
 data/
+
+# Configuración local del instalador del Agent (docs/operations.md §12): puede llevar secretos.
+/agent.env
+/agent.toml

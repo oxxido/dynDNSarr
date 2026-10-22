@@ -13,6 +13,10 @@ Group=dyndnsarr
 # el TOML ni en este archivo.
 # La API de control del Hub (slice 3b) se activa con DYNDNSARR_AGENT_API_TOKEN, HOST (IP LAN) y los
 # archivos TLS en agent.env; los certificados viven en /etc/dyndnsarr (docs/operations.md §7).
+# Instalación asistida (scripts/install-agent.sh, slice 8): tokens y rutas TLS generados, que
+# nunca se sobrescriben. Va antes que agent.env para que un valor explícito de este mande. El
+# prefijo `-` lo hace opcional: el camino manual (§2) no lo necesita.
+EnvironmentFile=-/etc/dyndnsarr/generated.env
 EnvironmentFile=/etc/dyndnsarr/agent.env
 ExecStart=/opt/dyndnsarr/venv/bin/dyndnsarr-agent
 Restart=always

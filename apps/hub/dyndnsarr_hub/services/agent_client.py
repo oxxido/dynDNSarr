@@ -1,6 +1,7 @@
 """Cliente del Hub hacia la API de control del Agent (`/internal/v1`, ADR-0006)."""
 
 import logging
+import ssl
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -106,6 +107,14 @@ def build_http_client(
     conexión TLS ociosa en el pool no contesta al cierre del Agent, que tardaría hasta 30 s en
     apagarse."""
     limits = httpx.Limits(max_keepalive_connections=0)
+    try:
+        verify = build_ssl_context(ca_file)
+    except (OSError, ssl.SSLError):
+        if not pinned:
+            raise
+        # Sin la CA global (instalación solo con emparejamiento) los Agents emparejados siguen
+        # funcionando; para el resto, un contexto sin ninguna CA: todo TLS falla (`tls_error`).
+        verify = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     mounts = None
     if pinned and transport is None:
         mounts = {
@@ -114,9 +123,7 @@ def build_http_client(
             )
             for url, ca_pem in pinned.items()
         }
-    return httpx.AsyncClient(
-        verify=build_ssl_context(ca_file), transport=transport, limits=limits, mounts=mounts
-    )
+    return httpx.AsyncClient(verify=verify, transport=transport, limits=limits, mounts=mounts)
 
 
 @dataclass(frozen=True)

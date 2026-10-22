@@ -34,3 +34,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Imagen del Hub, healthcheck y persistencia tras restart
         run: scripts/verify-compose.sh
+
+  agent-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalador del Agent idempotente en debian:bookworm
+        run: scripts/verify-agent-install.sh

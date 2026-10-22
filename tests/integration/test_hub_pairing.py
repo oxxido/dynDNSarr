@@ -271,3 +271,17 @@ def test_paired_agent_appears_in_agent_list(tmp_path):
     assert result.stdout.startswith("raspberry-home  activo  tokens vigentes: 1")
     assert "api: https://192.168.1.50:8001" in result.stdout
     assert API_TOKEN not in result.stdout
+
+
+def test_missing_global_ca_does_not_break_paired_agents(tls_agent, tmp_path):
+    pem = tls_agent.ca_file.read_text()
+
+    async def health(pinned):
+        async with build_http_client(tmp_path / "missing.pem", None, pinned) as http:
+            return await AgentClient(http, tls_agent.url, tls_agent.token).health()
+
+    assert asyncio.run(health({tls_agent.url: pem})).ok
+    # Un Agent sin CA fijada no se verifica contra nada: falla cerrado.
+    assert asyncio.run(health({"https://127.0.0.1:1": pem})).error_code == "tls_error"
+    with pytest.raises(OSError):
+        build_http_client(tmp_path / "missing.pem")
