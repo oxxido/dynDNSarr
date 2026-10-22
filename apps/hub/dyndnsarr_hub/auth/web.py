@@ -12,6 +12,9 @@ from dyndnsarr_hub.clock import utc_now
 
 logger = logging.getLogger(__name__)
 
+# Rutas con sesión anónima (CSRF incluido): login y setup del primer administrador.
+ANONYMOUS = ("/admin/login", "/admin/setup")
+
 
 def error(code, message, **headers):
     return JSONResponse({"message_safe": message}, status_code=code, headers=headers)
@@ -44,7 +47,7 @@ async def protect(request, call_next):
             session = sessions.get(conn, raw, utc_now())
             request.state.session = session
             request.state.csrf = sessions.csrf(raw) if session else ""
-            if path != "/admin/login" and (session is None or session.user_id is None):
+            if path not in ANONYMOUS and (session is None or session.user_id is None):
                 response = denied(path)
             elif request.method not in ("GET", "HEAD", "OPTIONS"):
                 response = await validate_body(request, session, raw)
@@ -69,7 +72,7 @@ async def protect(request, call_next):
 
 
 async def validate_body(request, session, raw):
-    maximum = 4096 if request.url.path == "/admin/login" else 256 * 1024
+    maximum = 4096 if request.url.path in ANONYMOUS else 256 * 1024
     chunks, size = [], 0
     async for chunk in request.stream():
         size += len(chunk)

@@ -115,6 +115,22 @@ def set_api_token(conn: sqlite3.Connection, agent_id: str, api_token: str) -> No
         raise UnknownAgentError(agent_id)
 
 
+def set_api_ca_pem(conn: sqlite3.Connection, agent_id: str, ca_pem: str) -> None:
+    """Fija la CA de la API de ese Agent (emparejamiento, ADR-0013)."""
+    cursor = conn.execute("UPDATE agents SET api_ca_pem = ? WHERE agent_id = ?", (ca_pem, agent_id))
+    if cursor.rowcount == 0:
+        raise UnknownAgentError(agent_id)
+
+
+def pinned_cas(conn: sqlite3.Connection) -> dict[str, str]:
+    """`{api_url: api_ca_pem}` de los agentes con la CA fijada al emparejar."""
+    rows = conn.execute(
+        "SELECT api_url, api_ca_pem FROM agents "
+        "WHERE api_url IS NOT NULL AND api_ca_pem IS NOT NULL"
+    ).fetchall()
+    return {r[0]: r[1] for r in rows}
+
+
 def get_api_target(conn: sqlite3.Connection, agent_id: str) -> tuple[str | None, str | None]:
     """`(api_url, api_token)` del agente; `UnknownAgentError` si no existe."""
     row = conn.execute(

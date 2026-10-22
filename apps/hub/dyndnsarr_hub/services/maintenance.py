@@ -36,7 +36,8 @@ def purge(conn, now, days, receipts_days):
 
 
 async def refresh_integrations(conn, settings, transport=None, clock=utc_now):
-    async with build_http_client(settings.agent_ca_file, transport) as http:
+    pinned = agents_repo.pinned_cas(conn)
+    async with build_http_client(settings.agent_ca_file, transport, pinned) as http:
         for agent_id, url, token in agents_repo.api_targets(conn):
             try:
                 reply = await AgentClient(http, url, token).integrations()
