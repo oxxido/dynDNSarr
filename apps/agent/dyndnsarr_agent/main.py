@@ -185,7 +185,13 @@ async def _hub_link(
             app.state.hub_transport,
         )
         verify = build_ssl_context(None, await pair_until_done(conn, pairer))
-    async with httpx.AsyncClient(verify=verify, transport=app.state.hub_transport) as hub_http:
+    # Sin conexiones persistentes: una conexión TLS ociosa no contesta al cierre del puerto de
+    # enlace del Hub, que esperaría 30 s para apagarse (lo mismo que en `build_http_client`).
+    async with httpx.AsyncClient(
+        verify=verify,
+        transport=app.state.hub_transport,
+        limits=httpx.Limits(max_keepalive_connections=0),
+    ) as hub_http:
         hub_client = HttpHubClient(hub_http, hub.url, hub.agent_id, settings.hub_token)
         await outbox_run_forever(conn, hub_client)
 
