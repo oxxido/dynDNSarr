@@ -1,6 +1,7 @@
 """Cliente del Hub hacia la API de control del Agent (`/internal/v1`, ADR-0006)."""
 
 import logging
+import ssl
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -93,18 +94,36 @@ def check_api_url(url: str) -> str:
 
 
 def build_http_client(
-    ca_file: Path | None, transport: httpx.AsyncBaseTransport | None = None
+    ca_file: Path | None,
+    transport: httpx.AsyncBaseTransport | None = None,
+    pinned: dict[str, str] | None = None,
 ) -> httpx.AsyncClient:
     """Cliente con verificación TLS completa: solo la CA indicada, o el almacén del sistema.
+
+    `pinned` (`{api_url: ca_pem}`, de `agents_repo.pinned_cas`) monta para cada Agent emparejado
+    un transporte que solo confía en su propia CA (ADR-0013): la CA de un Agent no vale para otro.
 
     Sin conexiones persistentes: el refresco de estado (slice 4) llama una vez por minuto y una
     conexión TLS ociosa en el pool no contesta al cierre del Agent, que tardaría hasta 30 s en
     apagarse."""
-    return httpx.AsyncClient(
-        verify=build_ssl_context(ca_file),
-        transport=transport,
-        limits=httpx.Limits(max_keepalive_connections=0),
-    )
+    limits = httpx.Limits(max_keepalive_connections=0)
+    try:
+        verify = build_ssl_context(ca_file)
+    except (OSError, ssl.SSLError):
+        if not pinned:
+            raise
+        # Sin la CA global (instalación solo con emparejamiento) los Agents emparejados siguen
+        # funcionando; para el resto, un contexto sin ninguna CA: todo TLS falla (`tls_error`).
+        verify = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    mounts = None
+    if pinned and transport is None:
+        mounts = {
+            f"all://{urlsplit(url).netloc}": httpx.AsyncHTTPTransport(
+                verify=build_ssl_context(None, ca_pem), limits=limits
+            )
+            for url, ca_pem in pinned.items()
+        }
+    return httpx.AsyncClient(verify=verify, transport=transport, limits=limits, mounts=mounts)
 
 
 @dataclass(frozen=True)

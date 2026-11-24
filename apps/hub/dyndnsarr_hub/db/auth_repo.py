@@ -77,3 +77,15 @@ def clear_throttle(conn):
 
 def rehash(conn, encoded):
     conn.execute("UPDATE users SET password_hash = ? WHERE id = 1", (encoded,))
+
+
+def admin_setup(conn):
+    return conn.execute("SELECT token_hash, expires_at FROM admin_setup WHERE id = 1").fetchone()
+
+
+def save_admin_setup(conn, token_hash, expires_at):
+    conn.execute("INSERT OR REPLACE INTO admin_setup VALUES (1, ?, ?)", (token_hash, expires_at))
+
+
+def delete_admin_setup(conn):
+    conn.execute("DELETE FROM admin_setup")

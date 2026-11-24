@@ -335,6 +335,7 @@ Tema `system/light/dark`: `prefers-color-scheme`, selector manual, preferencia p
 **Paring/emparejamiento**:
 
 - MVP: aprovisionamiento manual seguro desde Hub con token/certificado por agente y verificación de identidad; códigos de un solo uso o mDNS de onboarding quedan como mejora. No exigir descubrimiento automático para completar el primer corte funcional.
+- Fase 7 (slice8, [ADR-0013](decisions/0013-instalacion-emparejamiento.md)): emparejamiento por código compartido de un solo uso (≥128 bits, HMAC, sin que el código viaje), puerto de enlace HTTPS propio del Hub con su CA y CA del Agent fijada por agente. El aprovisionamiento manual sigue disponible; mDNS sigue fuera.
 
 ## 12\. Hoja de ruta de implementación con entregables verificables
 
@@ -374,6 +375,21 @@ Tema `system/light/dark`: `prefers-color-scheme`, selector manual, preferencia p
 ### Fase 6 — v1.1 (posterior)
 
 - API de servicios compartida, servidor MCP con scopes y auditoría, adaptador Caddy con validación, expiración, rollback y controles anti-SSRF.
+
+### Fase 7 — Instalación asistida y emparejamiento
+
+- Instalador idempotente del Agent (systemd, TLS y tokens generados), `compose.yaml` pegable en Dockge, emparejamiento Agent ↔ Hub por código compartido, puerto de enlace HTTPS del Hub y setup web del primer administrador con token de un solo uso ([ADR-0013](decisions/0013-instalacion-emparejamiento.md)).
+- **Aceptación:** clonar, rellenar el `.env` y un comando por máquina; el mismo código en los dos lados enlaza Agent y Hub en cualquier orden, sin copiar tokens ni CA; un Hub impostor no recibe tokens.
+
+### Fase 8 — Caddy vía Agent
+
+- El Agent de la Raspberry que ejecuta Caddy escribe un fragmento importado por el Caddyfile y recarga por `localhost:2019`; gateway guiado; autopublicación de landing y admin.
+- **Aceptación:** recargar el Caddyfile no pierde publicaciones; la admin API nunca sale de la Raspberry.
+
+### Fase 9 — UI de publicaciones
+
+- Crear, editar, retirar y revertir publicaciones desde el admin web.
+- **Aceptación:** todas las operaciones con CSRF y auditoría.
 
 ## 13\. Matriz de pruebas mínimas
 

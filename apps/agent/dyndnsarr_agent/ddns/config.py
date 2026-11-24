@@ -10,6 +10,7 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    SecretStr,
     ValidationError,
     field_validator,
     model_validator,
@@ -17,6 +18,7 @@ from pydantic import (
 
 from dyndnsarr_agent.config import Settings
 from dyndnsarr_shared.events import AGENT_ID_PATTERN
+from dyndnsarr_shared.pairing import check_ca_pem
 
 _HOSTNAME = re.compile(
     r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
@@ -225,6 +227,37 @@ def require_hub_token(config: DdnsConfig, settings: Settings) -> None:
     if settings.hub_token is None or not settings.hub_token.get_secret_value():
         variable = f"{Settings.model_config['env_prefix']}HUB_TOKEN"
         raise ConfigError(f"hay una sección [hub] y falta el token: {variable}")
+
+
+def require_pairing(config: DdnsConfig, settings: Settings) -> str | None:
+    """Con código de emparejamiento (ADR-0013) hacen falta `[hub]`, los dos tokens y el TLS de la
+    API con su CA, y una escucha concreta (va en el certificado y en la URL que recibe el Hub).
+    Devuelve la CA de la API en PEM, o `None` sin código."""
+    if settings.pairing_code is None:
+        return None
+    prefix = Settings.model_config["env_prefix"]
+    if config.hub is None:
+        raise ConfigError(f"{prefix}PAIRING_CODE necesita la sección [hub] (url y agent_id)")
+    missing = [
+        f"{prefix}{name}"
+        for name, value in (
+            ("HUB_TOKEN", settings.hub_token),
+            ("API_TOKEN", settings.api_token),
+            ("TLS_CERT_FILE", settings.tls_cert_file),
+            ("TLS_CA_FILE", settings.tls_ca_file),
+        )
+        if value is None or (isinstance(value, SecretStr) and not value.get_secret_value())
+    ]
+    if missing:
+        raise ConfigError(f"{prefix}PAIRING_CODE necesita además: " + ", ".join(missing))
+    if settings.host in ("", "0.0.0.0", "::"):
+        raise ConfigError(
+            f"{prefix}HOST debe ser la IP o el nombre LAN del certificado, no {settings.host!r}"
+        )
+    try:
+        return check_ca_pem(settings.tls_ca_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise ConfigError(f"{prefix}TLS_CA_FILE no es un certificado PEM legible") from None
 
 
 def read_toml(path: Path) -> dict[str, Any]:

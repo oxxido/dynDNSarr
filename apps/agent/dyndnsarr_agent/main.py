@@ -1,6 +1,8 @@
 import asyncio
 import contextlib
 import logging
+import sqlite3
+import ssl
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -13,18 +15,21 @@ from dyndnsarr_agent.api.health import router as health_router
 from dyndnsarr_agent.api.internal import router as internal_router
 from dyndnsarr_agent.commands.executor import CommandExecutor
 from dyndnsarr_agent.config import Settings
-from dyndnsarr_agent.db import MIGRATIONS, ddns_repo
+from dyndnsarr_agent.db import MIGRATIONS, ddns_repo, pairing_repo
 from dyndnsarr_agent.db.state import record_boot
 from dyndnsarr_agent.ddns.active_config import RESET_HINT, ActiveConfig, ConfigHolder, load_active
 from dyndnsarr_agent.ddns.config import (
     ConfigError,
     DdnsConfig,
+    Hub,
     require_hub_token,
+    require_pairing,
     require_provider_credentials,
 )
 from dyndnsarr_agent.dns.resolver import DnsObserver, DnspythonObserver
 from dyndnsarr_agent.outbox.client import HttpHubClient
 from dyndnsarr_agent.outbox.loop import run_forever as outbox_run_forever
+from dyndnsarr_agent.outbox.pairing import ClaimContent, Pairer, pair_until_done
 from dyndnsarr_agent.providers.registry import build_providers
 from dyndnsarr_agent.scheduler import run_forever, utc_now
 from dyndnsarr_shared.db import connect, migrate
@@ -140,15 +145,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             hub = ddns_config.hub
             if hub is not None:
                 # Cliente y conexión propios: la entrega no comparte nada con el ciclo DDNS.
-                hub_http = await stack.enter_async_context(
-                    httpx.AsyncClient(
-                        verify=build_ssl_context(hub.ca_file), transport=app.state.hub_transport
-                    )
-                )
                 outbox_conn = connect(settings.db_path)
                 stack.callback(outbox_conn.close)
-                hub_client = HttpHubClient(hub_http, hub.url, hub.agent_id, settings.hub_token)
-                tasks.append(asyncio.create_task(outbox_run_forever(outbox_conn, hub_client)))
+                paired = pairing_repo.hub_ca(outbox_conn)
+                verify = None
+                if paired is not None or settings.pairing_code is None:
+                    # CA guardada al emparejar, o camino manual: `[hub].ca_file` o el sistema.
+                    verify = build_ssl_context(hub.ca_file, paired[0] if paired else None)
+                tasks.append(asyncio.create_task(_hub_link(app, hub, outbox_conn, verify)))
                 app.state.outbox_task = tasks[-1]
             try:
                 yield
@@ -160,6 +164,36 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                         await task
     finally:
         conn.close()
+
+
+async def _hub_link(
+    app: FastAPI, hub: Hub, conn: sqlite3.Connection, verify: ssl.SSLContext | None
+) -> None:
+    """Sin contexto TLS, empareja primero (ADR-0013); después entrega eventos al Hub."""
+    settings: Settings = app.state.settings
+    if verify is None:
+        pairer = Pairer(
+            hub.url,
+            settings.pairing_code,
+            ClaimContent(
+                hub.agent_id,
+                settings.api_url,
+                app.state.api_ca_pem,
+                settings.hub_token,
+                settings.api_token,
+            ),
+            app.state.hub_transport,
+        )
+        verify = build_ssl_context(None, await pair_until_done(conn, pairer))
+    # Sin conexiones persistentes: una conexión TLS ociosa no contesta al cierre del puerto de
+    # enlace del Hub, que esperaría 30 s para apagarse (lo mismo que en `build_http_client`).
+    async with httpx.AsyncClient(
+        verify=verify,
+        transport=app.state.hub_transport,
+        limits=httpx.Limits(max_keepalive_connections=0),
+    ) as hub_http:
+        hub_client = HttpHubClient(hub_http, hub.url, hub.agent_id, settings.hub_token)
+        await outbox_run_forever(conn, hub_client)
 
 
 def server_options(settings: Settings) -> dict[str, Any]:
@@ -196,6 +230,10 @@ def create_app(
                 ) from None
             raise
         require_hub_token(active.config, settings)
+    app.state.api_ca_pem = require_pairing(active.config, settings) if active else None
+    if settings.pairing_code is not None and active is None:
+        prefix = Settings.model_config["env_prefix"]
+        raise ConfigError(f"{prefix}PAIRING_CODE necesita {prefix}CONFIG_FILE con [hub]")
     if settings.api_enabled and active is None:
         prefix = Settings.model_config["env_prefix"]
         raise ConfigError(

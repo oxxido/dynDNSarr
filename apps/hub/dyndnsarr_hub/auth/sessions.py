@@ -34,7 +34,7 @@ def csrf(raw: str) -> str:
     return hashlib.sha256(("csrf:" + raw).encode()).hexdigest()
 
 
-def set_password(conn, username, password, now, *, create=False):
+def set_password(conn, username, password, now, *, create=False, actor="admin:cli"):
     if not re.fullmatch(r"[a-zA-Z0-9_.-]{1,64}", username) or not 12 <= len(password) <= 128:
         raise ValueError("Usuario de 1–64 caracteres simples y contraseña de 12–128 caracteres")
     existing = auth_repo.user(conn)
@@ -46,7 +46,7 @@ def set_password(conn, username, password, now, *, create=False):
         auth_repo.audit(
             conn,
             now,
-            "admin:cli",
+            actor,
             "admin_create" if create else "admin_password",
             result="succeeded",
         )
@@ -95,6 +95,19 @@ def authenticate(conn: sqlite3.Connection, username: str, password: str, now: da
                 auth_repo.rehash(conn, HASHER.hash(password))
             auth_repo.audit(conn, now, "admin:1", "login", result="succeeded")
         return 1, 0
+    record_failure(conn, now, throttle, "login", "invalid_credentials")
+    return None, 0
+
+
+def blocked_for(conn, now):
+    """Segundos que quedan de bloqueo global de credenciales (login y setup), o 0."""
+    throttle = auth_repo.throttle(conn)
+    if throttle and throttle[2] and now < parse_instant(throttle[2]):
+        return max(1, int((parse_instant(throttle[2]) - now).total_seconds()))
+    return 0
+
+
+def record_failure(conn, now, throttle, action, code):
     window, failures = iso(now), 0
     if throttle and now - parse_instant(throttle[0]) < timedelta(minutes=15):
         window, failures = throttle[:2]
@@ -102,7 +115,4 @@ def authenticate(conn: sqlite3.Connection, username: str, password: str, now: da
     blocked = iso(now + timedelta(minutes=15)) if failures >= 5 else None
     with transaction(conn):
         auth_repo.save_throttle(conn, window, failures, blocked)
-        auth_repo.audit(
-            conn, now, "anonymous", "login", result="failed", code="invalid_credentials"
-        )
-    return None, 0
+        auth_repo.audit(conn, now, "anonymous", action, result="failed", code=code)

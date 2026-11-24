@@ -6,10 +6,21 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-export DYNDNSARR_HUB_ADMIN_ORIGIN="https://hub.test"
-export DYNDNSARR_HUB_PORT="${DYNDNSARR_HUB_PORT:-18000}"
-compose=(docker compose -p dyndnsarr-verify -f "$root/apps/hub/compose.yaml")
-trap '"${compose[@]}" down -v --remove-orphans' EXIT
+link_port="${DYNDNSARR_HUB_LINK_PORT:-18443}"
+# Como en Dockge (slice 8): el compose.yaml del repo, sin editar, en otro directorio y con la ruta
+# del clon y el resto de variables en su `.env`.
+stack="$(mktemp -d)"
+cp "$root/apps/hub/compose.yaml" "$stack/compose.yaml"
+cat >"$stack/.env" <<EOF
+DYNDNSARR_SRC=$root
+DYNDNSARR_HUB_ADMIN_ORIGIN=https://hub.test
+DYNDNSARR_HUB_PORT=${DYNDNSARR_HUB_PORT:-18000}
+DYNDNSARR_HUB_LINK_PORT=$link_port
+DYNDNSARR_HUB_LINK_NAMES=127.0.0.1,localhost
+DYNDNSARR_HUB_PAIRING_CODE=00112233445566778899aabbccddeeff
+EOF
+compose=(docker compose -p dyndnsarr-verify --project-directory "$stack" -f "$stack/compose.yaml")
+trap '"${compose[@]}" down -v --remove-orphans; rm -r -- "$stack"' EXIT
 
 boot_count() {
     "${compose[@]}" exec -T hub python -c \
@@ -59,3 +70,30 @@ else:
     raise AssertionError("OpenAPI expuesto")
 print("OK: imagen con Argon2id y login privado")
 PY
+
+# Slice8: puerto de enlace HTTPS publicado con la CA propia del Hub (en /data) y token de setup
+# del administrador en el log mientras no hay administrador.
+python3 - "$link_port" <<'PY'
+import json, ssl, sys, urllib.error, urllib.request
+port = sys.argv[1]
+unverified = ssl.create_default_context()
+unverified.check_hostname, unverified.verify_mode = False, ssl.CERT_NONE
+request = urllib.request.Request(
+    f"https://127.0.0.1:{port}/pair/v1/challenge",
+    data=json.dumps({"nonce": "ab" * 32}).encode(),
+    headers={"Content-Type": "application/json"},
+)
+body = json.load(urllib.request.urlopen(request, context=unverified, timeout=5))
+verified = ssl.create_default_context(cadata=body["ca_pem"])
+try:
+    urllib.request.urlopen(f"https://127.0.0.1:{port}/healthz", context=verified, timeout=5)
+except urllib.error.HTTPError as exc:
+    assert exc.code == 404  # fuera de /api/v1 y /pair/v1 no se sirve nada
+else:
+    raise AssertionError("el puerto de enlace sirve /healthz")
+print("OK: puerto de enlace HTTPS verificable con la CA del desafío")
+PY
+# Sin tubería: con pipefail, `grep -q` cerraría `logs` antes de tiempo (SIGPIPE).
+hub_logs="$("${compose[@]}" logs hub)"
+grep -q admin_setup_available <<<"$hub_logs"
+echo "OK: compose.yaml sin editar con DYNDNSARR_SRC, puerto de enlace y setup del administrador"

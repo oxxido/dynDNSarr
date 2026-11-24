@@ -176,7 +176,8 @@ async def execute(conn, session, action, data, settings, transport=None):
     if action != "policy":
         try:
             url, token = target(conn, agent_id)
-            async with build_http_client(settings.agent_ca_file, transport) as http:
+            pinned = agents_repo.pinned_cas(conn)
+            async with build_http_client(settings.agent_ca_file, transport, pinned) as http:
                 client = AgentClient(http, url, token)
                 if action == "refresh":
                     outcome = await status_refresher.refresh_once(

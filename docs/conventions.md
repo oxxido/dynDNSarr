@@ -147,3 +147,14 @@ Detalle: [slices/05-hub-privado-diagnosticos.md](slices/05-hub-privado-diagnosti
   intenciones/revisiones persistentes y reconciliación independiente. ADR-0012.
 - `resource_id` de `check_dns`/`sync_ddns` es el nombre exacto del registro; se valida al
   recibir y ejecutar, y un `monitored` nunca entra en la actualización.
+
+## Fijado en slice8
+
+Detalle: [slices/08-instalacion-emparejamiento.md](slices/08-instalacion-emparejamiento.md) y [ADR-0013](decisions/0013-instalacion-emparejamiento.md).
+
+- Contrato `/pair/v1` en `packages/shared/dyndnsarr_shared/pairing.py`: el código (≥128 bits en hex, validado al cargar la configuración de los dos lados) nunca viaja; los MAC son HMAC-SHA256 sobre la etiqueta y las partes en JSON, comparados en tiempo constante. `unverified_bootstrap_context` es la única excepción a «TLS siempre verificado» y solo sirve para el desafío, que no lleva secretos; nada de lo recibido vale sin su MAC.
+- Hub: reglas en `services/pairing.py`, SQL en `db/pairing_repo.py`, HTTP en `api/pairing.py`. El puerto de enlace sirve la misma app envuelta en `link_app` (solo `/api/v1` y `/pair/v1`, con una marca en el `scope`), sin lifespan propio y arrancado después del principal. `/pair/v1` sin la marca da 404. CA y certificado en `link_tls.py` (`cryptography`).
+- CA de la API de un Agent emparejado fijada por URL (`agents_repo.pinned_cas` → `build_http_client(..., pinned)` monta un transporte por Agent). Quien construya un cliente hacia los Agents le pasa `pinned`; el refresco de estado lo reconstruye en cada pasada.
+- Agent: la tarea de enlace empareja primero (`outbox/pairing.py`, conexión propia como el outbox) y después entrega; nunca toca el ciclo DDNS. Códigos seguros (`hub_mac_mismatch`, `code_consumed`, `agent_exists`…) en `app_state` para `pair-status`. Los clientes hacia el puerto de enlace no reutilizan conexiones TLS ociosas.
+- Setup del administrador: la clave de log `setup_code` no contiene `token` a propósito; es la única excepción a «sin secretos en logs» y solo mientras no hay administrador. Sus fallos usan el bloqueo global de credenciales de ADR-0009 (`sessions.record_failure`).
+- Instalador: el material generado (`/etc/dyndnsarr/generated.env`, `/etc/dyndnsarr/tls`) nunca se sobrescribe; el código se instala desde una copia temporal para no dejar archivos de root en el clon.

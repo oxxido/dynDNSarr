@@ -1,6 +1,6 @@
 # Operación
 
-Guía de arranque y despliegue (slices 1 a 5). Variables de configuración: [.env.example](../.env.example).
+Guía de arranque y despliegue. Para una instalación nueva, empieza por la **instalación asistida (§12)**; el resto describe el camino manual y la operación. Variables de configuración: [.env.example](../.env.example).
 
 Ambos componentes escuchan por defecto en `127.0.0.1`. Cámbialo solo con un firewall que limite el origen: el Agent no debe ser accesible desde Internet ni por equipos distintos al Hub.
 
@@ -22,6 +22,8 @@ scripts/verify-wheels.sh   # construye, instala en un venv limpio y arranca Agen
 ```
 
 ## 2. Agent en la Raspberry (systemd)
+
+> Instalación nueva: `sudo scripts/install-agent.sh` hace todo esto (§12.2). Lo que sigue es el camino manual.
 
 Requiere Python 3.11+ del sistema (ADR-0002), `python3-venv` y `sudo`. Los comandos con `sudo` los ejecuta la persona que administra la Raspberry.
 
@@ -52,6 +54,8 @@ Requiere Python 3.11+ del sistema (ADR-0002), `python3-venv` y `sudo`. Los coman
 Los datos viven en `/var/lib/dyndnsarr` (creado por systemd, modo `0700`).
 
 ## 3. Hub con Docker Compose / Dockge
+
+> Instalación nueva y Dockge: pega `compose.yaml` sin cambios y fija `DYNDNSARR_SRC` (§12.1).
 
 El Hub se construye desde el repositorio (aún no hay imagen publicada).
 
@@ -185,6 +189,8 @@ El Agent entrega al Hub los eventos que guarda en su SQLite (`agent_started`, `i
 
 El Hub no termina TLS: va **detrás de un proxy TLS** y el Agent verifica siempre el certificado (no hay forma de desactivarlo). El token viaja en una cabecera `Authorization`, por eso `http://` solo se admite hacia `localhost`/`127.0.0.1` (pruebas) y el puerto del Hub no debe estar abierto a la LAN.
 
+> Con el emparejamiento (§12) el Hub sirve `/api/v1` en su propio puerto de enlace HTTPS y no hacen falta el proxy ni `agent-add` de 6.1–6.2.
+
 ### 6.1 Proxy TLS con Caddy y CA local
 
 Receta no probada contra tu infraestructura (criterio manual del slice). En el servidor del Hub, con el Hub publicado solo en `127.0.0.1:8000` (§3) y `hub.example.lan` resolviendo a ese servidor en tu LAN:
@@ -258,6 +264,8 @@ Un evento que el Hub rechaza por inválido (`invalid_event`, `payload_too_large`
 Desde la consola del Hub (todavía no hay UI) se puede consultar al Agent, enviarle una **configuración versionada** y pedirle **comandos** (`check_dns`, `sync_ddns`). El Agent vive en la Raspberry sin proxy delante: sirve **HTTPS él mismo** con un certificado de una CA local, y el Hub verifica siempre que lo firma esa CA (no hay forma de desactivarlo). El Agent sigue funcionando sin el Hub: DDNS, configuración activa, `config-reset` y la API no dependen de él, y los resultados se entregan al volver (§6).
 
 La API (`/internal/v1`) solo existe si el Agent tiene `DYNDNSARR_AGENT_API_TOKEN` (y `DYNDNSARR_AGENT_CONFIG_FILE`: la configuración remota se superpone sobre el TOML). Con token y escucha fuera de loopback, el Agent **no arranca sin TLS**.
+
+> Con el instalador y el emparejamiento (§12) la CA, el certificado, el token y el alta en el Hub de 7.1–7.2 se hacen solos, y el Hub fija la CA de cada Agent emparejado.
 
 ### 7.1 CA local y certificado del Agent
 
@@ -450,7 +458,7 @@ DYNDNSARR_HUB_ADMIN_ORIGIN=https://dyndnsarr-admin.example.net
 
 En Compose se pasa desde el archivo de entorno del despliegue. Fuera de Docker se define al arrancar el proceso. Reinicia el Hub tras cambiar esta variable. Vacía o ausente, el login responde 503 hasta configurarla; la landing y el Agent continúan funcionando. No se confía en `Host` ni `X-Forwarded-*` para decidir este origen.
 
-Crea el único administrador con una terminal interactiva:
+Crea el único administrador desde el navegador con el código de un solo uso de los logs (§12.4), o con una terminal interactiva:
 
 ```bash
 docker compose -f apps/hub/compose.yaml exec hub dyndnsarr-hub admin-create admin
@@ -458,7 +466,7 @@ docker compose -f apps/hub/compose.yaml exec hub dyndnsarr-hub admin-create admi
 # .venv/bin/dyndnsarr-hub admin-create admin
 ```
 
-La contraseña se introduce dos veces sin mostrarla: 12–128 caracteres. El usuario admite 1–64 caracteres (`a-z`, `A-Z`, números, `_`, `.`, `-`). No hay contraseña de fábrica, alta por navegador ni credenciales administrativas por entorno. Solo se guarda el hash Argon2id (64 MiB, 3 iteraciones, 4 hilos). Medición local de desarrollo: aproximadamente 85 ms para hash y 71 ms para verificación; mide en el servidor de destino antes de dimensionar recursos.
+La contraseña se introduce dos veces sin mostrarla: 12–128 caracteres. El usuario admite 1–64 caracteres (`a-z`, `A-Z`, números, `_`, `.`, `-`). No hay contraseña de fábrica ni credenciales administrativas por entorno; el alta por navegador exige el código de un solo uso de los logs (§12.4). Solo se guarda el hash Argon2id (64 MiB, 3 iteraciones, 4 hilos). Medición local de desarrollo: aproximadamente 85 ms para hash y 71 ms para verificación; mide en el servidor de destino antes de dimensionar recursos.
 
 Recuperación de contraseña o bloqueo:
 
@@ -838,3 +846,95 @@ Tras backup y actualización, con recursos de prueba autorizados:
 
 Las pruebas automatizadas usan Caddy simulado y MCP/Hub TLS reales; las comprobaciones de
 Caddy/ACME y destinos de producción requieren esta validación manual del operador.
+
+## 12. Instalación asistida y emparejamiento (slice8)
+
+Camino recomendado para instalaciones nuevas: sustituye el recorrido manual por §2, §3, §6.1–6.2, §7.1–7.2 y el `admin-create` de §9.1. El camino manual sigue funcionando sin cambios. Decisiones y riesgos: [ADR-0013](decisions/0013-instalacion-emparejamiento.md).
+
+Antes de empezar, genera **un** código de emparejamiento (de un solo uso, 128 bits) en cualquier equipo:
+
+```bash
+openssl rand -hex 16
+```
+
+Va en los dos lados. Un código más corto o no hexadecimal impide arrancar al Agent y al Hub, con un mensaje que nombra la variable.
+
+### 12.1 Hub en Dockge (o Docker Compose)
+
+1. Clona el repositorio en el servidor (p. ej. `/opt/src/dyndnsarr`).
+2. En Dockge crea un stack nuevo y pega **sin cambios** el contenido de [apps/hub/compose.yaml](../apps/hub/compose.yaml).
+3. En el `.env` del stack:
+   ```dotenv
+   DYNDNSARR_SRC=/opt/src/dyndnsarr
+   # Puerto de enlace HTTPS para los Agents, en la IP LAN del servidor.
+   DYNDNSARR_HUB_LINK_BIND=192.168.1.10
+   DYNDNSARR_HUB_LINK_NAMES=192.168.1.10
+   DYNDNSARR_HUB_PAIRING_CODE=<el código>
+   # Administración web (opcional): origen HTTPS visto por el navegador (§9.2).
+   DYNDNSARR_HUB_ADMIN_ORIGIN=https://dyndnsarr-admin.example.net
+   ```
+   `LINK_NAMES` son las IPs o nombres LAN con los que los Agents llamarán al Hub (separados por comas); van al certificado. El puerto publicado es `DYNDNSARR_HUB_LINK_PORT` (8443). El puerto HTTP (8000) sigue en `127.0.0.1` salvo que lo cambies (§3).
+4. Arranca el stack. El Hub crea en `/data` una CA propia (10 años) y el certificado del puerto de enlace (1 año, se renueva solo al arrancar si quedan menos de 30 días o cambian los nombres). Comprueba en los logs `startup` con `link_port`.
+
+Fuera de Dockge: `docker compose up -d --build` en `apps/hub/`, con esas variables en `apps/hub/.env` (`DYNDNSARR_SRC` sobra dentro del repo).
+
+### 12.2 Agent en la Raspberry
+
+```bash
+git clone <repositorio> dyndnsarr && cd dyndnsarr
+cp apps/agent/config/agent.env.example agent.env
+cp apps/agent/config/agent.example.toml agent.toml
+```
+
+- `agent.env`: `DYNDNSARR_AGENT_HOST` es la IP LAN de la Raspberry (el Agent escucha en ella y va en su certificado); `DYNDNSARR_AGENT_PAIRING_CODE` el mismo código; las credenciales de DonDominio si hay registros `managed`.
+- `agent.toml`: registros y fuentes (§5) y la sección `[hub]` con `url = "https://192.168.1.10:8443"` (un nombre de `LINK_NAMES` y el puerto de enlace) y `agent_id`. Sin `ca_file`.
+
+```bash
+sudo scripts/install-agent.sh
+```
+
+Lo ejecuta la persona que administra la Raspberry (Debian 12 / Raspberry Pi OS con `python3-venv` y `openssl`). Crea el usuario `dyndnsarr`, instala el código en `/opt/dyndnsarr/venv`, copia `agent.env`/`agent.toml` a `/etc/dyndnsarr`, genera una vez tokens (`/etc/dyndnsarr/generated.env`, 0600) y una CA propia con el certificado de la API (`/etc/dyndnsarr/tls`, 2 años), instala la unidad systemd y comprueba `/healthz` por HTTPS. Al terminar, borra `agent.env` del clon: puede llevar credenciales.
+
+- **Actualizar:** `git pull && sudo scripts/install-agent.sh`. Sin `agent.env`/`agent.toml` en el clon se conserva la configuración instalada. Repetirlo no cambia tokens, CA ni datos; renueva el certificado si quedan menos de 60 días o cambió `HOST`.
+- **Firewall:** el instalador no lo toca. Limita el puerto 8001 al servidor del Hub, p. ej. `sudo ufw allow from 192.168.1.10 to any port 8001 proto tcp`.
+- La clave de la CA del Agent (`agent-ca.key`, 0600 root) se queda en la Raspberry: solo vale para este Agent, porque el Hub la fija por agente.
+
+### 12.3 Emparejamiento
+
+El orden de arranque da igual. El Agent pide al Hub su CA con un desafío y solo continúa si el Hub demuestra conocer el código; después le entrega por TLS verificado sus tokens, su URL y su CA. El Hub registra el agente y consume el código. Sin `agent-add`, `agent-set-api`, `agent-api-token` ni copiar CA.
+
+```bash
+sudo -u dyndnsarr /opt/dyndnsarr/venv/bin/dyndnsarr-agent pair-status
+docker compose exec hub dyndnsarr-hub agent-list
+docker compose exec hub dyndnsarr-hub agent-status raspberry-home
+```
+
+Hasta lograrlo, el Agent reintenta (30 s ×2 hasta 15 min) y el DDNS sigue igual. Errores de `pair-status`:
+
+| Código | Qué hacer |
+|---|---|
+| `hub_mac_mismatch` | El Hub no demostró conocer el código: códigos distintos o un equipo en medio. No se envió ningún token. |
+| `code_consumed` | El código ya se usó con otro Agent: genera otro en los dos lados y reinicia ambos. |
+| `agent_exists` | El Hub ya tiene ese `agent_id`: usa otro (no se sustituye un agente existente). |
+| `rate_limited` | Diez fallos de MAC en 15 min bloquean el emparejamiento 15 min. |
+| `pairing_unavailable` | El Hub no tiene código o la `url` de `[hub]` no apunta al puerto de enlace. |
+| `connect_error` / `tls_error` | Hub apagado, URL o puerto incorrectos, firewall; o el certificado no es de la CA del desafío. |
+
+- **Código consumido:** tras emparejar ya no sirve, aunque siga en el `.env` de Dockge (el Hub lo indica en el log con `pairing_code_consumed`). Puedes borrarlo de los dos lados. **Antes** de consumirse, quien lo lea puede emparejar un Agent falso: arranca el Agent pronto o bórralo si no lo vas a usar.
+- **Hub reinstalado** (volumen `/data` perdido, CA nueva): el Agent verá `tls_error`. Ejecuta `sudo -u dyndnsarr /opt/dyndnsarr/venv/bin/dyndnsarr-agent pair-reset`, pon un código nuevo en los dos lados y reinicia ambos.
+- Los eventos van por el puerto de enlace (`/api/v1`); el puerto HTTP conserva `/api/v1` para el camino con proxy (§6).
+
+### 12.4 Primer administrador
+
+Con `DYNDNSARR_HUB_ADMIN_ORIGIN` y sin administrador, cada arranque del Hub escribe en su log un código de un solo uso (`admin_setup_available`, campo `setup_code`; caduca a las 24 h):
+
+```bash
+docker compose logs hub | grep admin_setup_available
+```
+
+Abre `https://<ADMIN_ORIGIN>/admin/setup`, pega el código y elige usuario y contraseña (12–128 caracteres, dos veces). Los fallos cuentan para el bloqueo de credenciales de §9 (5 en 15 min). Con administrador creado, `/admin/setup` da 404 y no se emiten más códigos. `admin-create` y `admin-password` siguen disponibles. Es la única excepción a «sin secretos en logs»: quien lea los logs antes de crear el administrador puede crearlo.
+
+### 12.5 Verificación automática
+
+- `scripts/verify-agent-install.sh`: instala tres veces en un contenedor `debian:bookworm` (sin systemd) y comprueba idempotencia, permisos, `/healthz` HTTPS con la CA generada y que el emparejamiento se reintenta sin secretos en el log. Requiere Docker y acceso a PyPI.
+- `scripts/verify-compose.sh`: el `compose.yaml` sin editar, copiado fuera del repo con `DYNDNSARR_SRC` en su `.env`, construye el Hub `healthy` con el puerto de enlace verificable con la CA del desafío.

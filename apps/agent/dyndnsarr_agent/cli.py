@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import hashlib
 import sqlite3
 import sys
 from collections.abc import Sequence
@@ -9,7 +10,7 @@ import uvicorn
 from pydantic import ValidationError
 
 from dyndnsarr_agent.config import Settings
-from dyndnsarr_agent.db import MIGRATIONS, control_repo, ddns_repo
+from dyndnsarr_agent.db import MIGRATIONS, control_repo, ddns_repo, pairing_repo
 from dyndnsarr_agent.ddns import manual
 from dyndnsarr_agent.ddns.active_config import load_active
 from dyndnsarr_agent.ddns.config import (
@@ -289,7 +290,75 @@ def _config_reset(settings: Settings, **_: object) -> int:
     return 0
 
 
+# Qué hacer ante cada fallo de emparejamiento (códigos de `outbox/pairing.py`).
+_PAIRING_HINTS = {
+    "hub_mac_mismatch": "el Hub no demostró conocer el código: códigos distintos o un equipo en "
+    "medio. No se envió ningún token",
+    "bad_mac": "el Hub no aceptó el código: revisa que sea el mismo en los dos lados",
+    "code_consumed": "el código ya se usó: genera otro y ponlo en los dos lados",
+    "agent_exists": "el Hub ya tiene un agente con este agent_id",
+    "rate_limited": "demasiados intentos fallidos en el Hub; espera 15 min",
+    "pairing_unavailable": "el Hub no tiene código de emparejamiento o la URL no es la del "
+    "puerto de enlace",
+    "tls_error": "fallo TLS: el Hub no presenta un certificado de la CA del desafío",
+    "connect_error": "no se pudo conectar con el Hub (¿arrancado? ¿URL y puerto de [hub]?)",
+    "timeout": "el Hub no respondió a tiempo",
+}
+
+
+def _pair_status(settings: Settings, **_: object) -> int:
+    if not settings.db_path.exists():
+        print(
+            f"No hay base de datos en {settings.db_path}: el Agent no ha arrancado.",
+            file=sys.stderr,
+        )
+        return 1
+    conn = sqlite3.connect(f"file:{settings.db_path}?mode=ro", uri=True)
+    try:
+        paired = pairing_repo.hub_ca(conn)
+        code, attempt_at = pairing_repo.last_attempt(conn)
+    except sqlite3.OperationalError:
+        print("La base de datos es anterior al emparejamiento: arranca el Agent.", file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+    if paired is not None:
+        fingerprint = hashlib.sha256(paired[0].encode()).hexdigest()[:16]
+        print(f"Emparejado con el Hub el {paired[1]} (CA del Hub sha256:{fingerprint}…).")
+        print("El código ya no se usa: puedes borrarlo de agent.env y del .env del Hub.")
+        return 0
+    if settings.pairing_code is None:
+        print("Sin emparejar y sin DYNDNSARR_AGENT_PAIRING_CODE: el enlace usa el camino manual.")
+        return 1
+    if code is None:
+        print("Sin emparejar: aún no hay intentos (¿está arrancado el Agent?).")
+        return 1
+    print(f"Sin emparejar. Último intento: {attempt_at}, error: {code}")
+    if code in _PAIRING_HINTS:
+        print(f"  {_PAIRING_HINTS[code]}.")
+    print("  El Agent reintenta solo (hasta cada 15 min); el DDNS no se ve afectado.")
+    return 1
+
+
+def _pair_reset(settings: Settings, **_: object) -> int:
+    """Olvida la CA del Hub: al reiniciar, el Agent vuelve a emparejar con el código actual."""
+    conn = _open_db(settings)
+    try:
+        with transaction(conn):
+            was_paired = pairing_repo.reset(conn)
+    finally:
+        conn.close()
+    print("Emparejamiento olvidado." if was_paired else "El Agent no estaba emparejado.")
+    print(
+        "Pon un código nuevo en DYNDNSARR_AGENT_PAIRING_CODE y en el Hub (el anterior quedó "
+        "consumido) y reinicia el Agent."
+    )
+    return 0
+
+
 _COMMANDS = {
+    "pair-status": _pair_status,
+    "pair-reset": _pair_reset,
     "status": _status,
     "check-ip": _check_ip,
     "check-dns": _check_dns,
@@ -316,6 +385,8 @@ def run(
         help="actualiza ahora los registros managed (ignora la espera de backoff)",
     )
     sub.add_parser("config-reset", help="descarta la configuración remota del Hub y vuelve al TOML")
+    sub.add_parser("pair-status", help="muestra el estado del emparejamiento con el Hub")
+    sub.add_parser("pair-reset", help="olvida el emparejamiento (exige un código nuevo)")
     args = parser.parse_args(argv)
     if args.command in (None, "serve"):
         serve()

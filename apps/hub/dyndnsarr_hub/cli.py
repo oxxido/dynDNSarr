@@ -14,6 +14,7 @@ import httpx
 import uvicorn
 from pydantic import ValidationError
 
+from dyndnsarr_hub.api.pairing import link_app
 from dyndnsarr_hub.auth.tokens import generate_api_token, generate_token, hash_token
 from dyndnsarr_hub.clock import iso, utc_now
 from dyndnsarr_hub.config import Settings
@@ -41,8 +42,11 @@ def _load_settings() -> Settings:
     except ValidationError as exc:
         # Sin el valor recibido: a futuro la configuración puede incluir secretos.
         prefix = Settings.model_config["env_prefix"]
+        # Un error de la validación cruzada (sin campo) ya nombra las variables en su mensaje.
         problems = "\n".join(
             f"  {prefix}{'_'.join(map(str, e['loc'])).upper()}: {e['msg']}"
+            if e["loc"]
+            else f"  {e['msg']}"
             for e in exc.errors(include_input=False)
         )
         sys.exit(f"Configuración inválida:\n{problems}")
@@ -52,7 +56,40 @@ def serve() -> None:
     """Sirve el Hub. Es el comando por defecto."""
     settings = _load_settings()
     configure_logging(settings.log_level)
-    uvicorn.run(create_app(settings), host=settings.host, port=settings.port, log_config=None)
+    app = create_app(settings)
+    if not settings.link_enabled:
+        uvicorn.run(app, host=settings.host, port=settings.port, log_config=None)
+        return
+    asyncio.run(_serve_with_link(app, settings))
+
+
+async def _serve_with_link(app, settings: Settings) -> None:
+    """HTTP y puerto de enlace HTTPS (ADR-0013) en el mismo proceso y worker. El de enlace no
+    ejecuta el lifespan: usa el estado que deja el principal, así que arranca después de él."""
+    main = uvicorn.Server(
+        uvicorn.Config(app, host=settings.host, port=settings.port, log_config=None)
+    )
+    link = uvicorn.Server(
+        uvicorn.Config(
+            link_app(app),
+            host=settings.host,
+            port=settings.link_port,
+            ssl_certfile=str(app.state.link_tls.cert_file),
+            ssl_keyfile=str(app.state.link_tls.key_file),
+            lifespan="off",
+            log_config=None,
+        )
+    )
+    main_task = asyncio.create_task(main.serve())
+    while not main.started:
+        if main_task.done():
+            await main_task
+            return
+        await asyncio.sleep(0.05)
+    link_task = asyncio.create_task(link.serve())
+    await asyncio.wait({main_task, link_task}, return_when=asyncio.FIRST_COMPLETED)
+    main.should_exit = link.should_exit = True
+    await asyncio.gather(main_task, link_task)
 
 
 def _open_db(settings: Settings) -> sqlite3.Connection:
@@ -184,7 +221,12 @@ def _call_agent(
     """Una llamada al Agent con TLS verificado (solo la CA configurada o el almacén del sistema)."""
 
     async def go() -> Reply:
-        async with build_http_client(settings.agent_ca_file, transport) as http:
+        conn = _open_db(settings)
+        try:
+            pinned = agents_repo.pinned_cas(conn)
+        finally:
+            conn.close()
+        async with build_http_client(settings.agent_ca_file, transport, pinned) as http:
             return await action(AgentClient(http, url, token))
 
     try:

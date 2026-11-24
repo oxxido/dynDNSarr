@@ -16,7 +16,7 @@ from dyndnsarr_hub.clock import parse_instant, utc_now
 from dyndnsarr_hub.db import admin_repo, auth_repo, control_repo, private_repo, public_repo
 from dyndnsarr_hub.monitoring import metrics
 from dyndnsarr_hub.public.state import derive_state, worst
-from dyndnsarr_hub.services import admin_actions, control, status_refresher
+from dyndnsarr_hub.services import admin_actions, admin_setup, control, status_refresher
 from dyndnsarr_shared.control import EffectiveConfig
 
 router = APIRouter(prefix="/admin")
@@ -64,7 +64,7 @@ async def login_form(request: Request):
             message="Configura el origen HTTPS de administración antes de iniciar sesión.",
         )
     if not auth_repo.user(request.app.state.db):
-        return render(request, "login", message="Falta el aprovisionamiento por consola.")
+        return render(request, "login", missing_admin=True)
     if request.state.session is None:
         raw, session = sessions.create(request.app.state.db, utc_now())
         request.state.session, request.state.csrf = session, sessions.csrf(raw)
@@ -95,6 +95,49 @@ async def login(request: Request):
     auth_repo.revoke(request.app.state.db, request.state.session.digest)
     raw, _session = sessions.create(request.app.state.db, utc_now(), user_id)
     return cookie(RedirectResponse("/admin/", status_code=303), raw, True)
+
+
+@router.get("/setup", response_model=None)
+async def setup_form(request: Request):
+    conn = request.app.state.db
+    if not admin_setup.available(conn):
+        return error(404, "No encontrado")
+    if not request.app.state.settings.admin_origin:
+        return render(
+            request,
+            "setup",
+            status=503,
+            message="Configura el origen HTTPS de administración antes de crear el administrador.",
+        )
+    if request.state.session is None:
+        raw, session = sessions.create(conn, utc_now())
+        request.state.session, request.state.csrf = session, sessions.csrf(raw)
+        return cookie(render(request, "setup"), raw)
+    return render(request, "setup")
+
+
+@router.post("/setup", response_model=None)
+async def setup(request: Request):
+    conn, data = request.app.state.db, request.state.form
+    if not admin_setup.available(conn):
+        return error(404, "No encontrado")
+    fields = [data.get(k, "") for k in ("setup_code", "username", "password", "password2")]
+    if not all(isinstance(v, str) and len(v) <= 128 for v in fields):
+        return render(request, "setup", status=400, message="Formulario no válido")
+    raw, username, password, password2 = fields
+    if password != password2:
+        return render(request, "setup", status=400, message="Las contraseñas no coinciden")
+    try:
+        admin_setup.create_admin(conn, raw, username, password, utc_now())
+    except admin_setup.SetupError as exc:
+        response = render(request, "setup", status=exc.status, message=str(exc))
+        if exc.retry_after:
+            response.headers["Retry-After"] = str(exc.retry_after)
+        return response
+    except ValueError as exc:
+        return render(request, "setup", status=400, message=str(exc))
+    auth_repo.revoke(conn, request.state.session.digest)
+    return RedirectResponse("/admin/login", status_code=303)
 
 
 @router.post("/logout", response_model=None)
